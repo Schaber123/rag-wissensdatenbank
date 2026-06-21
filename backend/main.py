@@ -1,7 +1,7 @@
 import os, io, json, uuid, urllib.request, threading
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastembed import TextEmbedding
@@ -113,16 +113,32 @@ def chunk(text, size=1000, overlap=150):
         i += size - overlap
     return out
 
-def index_file(rel, data):
-    ensure_collection()
+def delete_source(rel):
     qc.delete(COLL, points_selector=Filter(must=[FieldCondition(key="source", match=MatchValue(value=rel))]))
+
+def index_file(rel, data, sig=None):
+    ensure_collection()
+    delete_source(rel)
     chs = chunk(read_text_bytes(rel, data))
     if not chs: return 0
     tenant = rel.split("/")[0] if "/" in rel else "qnap"
-    pts = [PointStruct(id=str(uuid.uuid4()), vector=v, payload={"text": ch, "source": rel, "tenant": tenant})
+    pts = [PointStruct(id=str(uuid.uuid4()), vector=v, payload={"text": ch, "source": rel, "tenant": tenant, "sig": sig})
            for ch, v in zip(chs, emb_passages(chs))]
     for i in range(0, len(pts), 256): qc.upsert(COLL, points=pts[i:i+256])
     return len(pts)
+
+def indexed_sigs():
+    """Liefert {source: sig} der bereits indizierten Dateien (Signatur = groesse-mtime)."""
+    ensure_collection(); out = {}; off = None
+    try:
+        while True:
+            pts, off = qc.scroll(COLL, limit=256, offset=off, with_payload=["source", "sig"])
+            for p in pts:
+                src = p.payload.get("source")
+                if src and src not in out: out[src] = p.payload.get("sig")
+            if off is None: break
+    except Exception: pass
+    return out
 
 def smb_connect(s):
     import smbclient
@@ -134,25 +150,59 @@ def smb_connect(s):
     base = root + ("\\" + sub if sub else "")
     return smbclient, root, base, sub
 
-def ingest_smb():
+def file_sig(stat):
+    """Signatur aus Groesse + Aenderungszeit – erkennt geaenderte Dateien ohne Download."""
+    return f"{getattr(stat, 'st_size', 0)}-{int(getattr(stat, 'st_mtime', 0))}"
+
+def ingest_smb(full=False):
     cfg = load_config(); s = cfg["sources"]["smb"]
     if not s.get("enabled"): raise ValueError("SMB-Quelle ist nicht aktiviert.")
     if not s.get("share") or not s.get("username"): raise ValueError("Share-Name und Benutzername muessen gesetzt sein.")
     smbclient, root, base, sub = smb_connect(s)
-    items = []
+
+    # 1) Aktuellen Dateibestand auf dem Share inkl. Signatur erfassen (ohne Inhalt zu laden)
+    set_indexing(True, "Dateiliste wird gelesen…")
+    current = {}  # rel -> sig
     for dp, _d, files in smbclient.walk(base):
         for fn in files:
             if fn.lower().endswith(EXTS):
-                full = dp + "\\" + fn
-                rel = full[len(root):].strip("\\").replace("\\", "/")
-                with smbclient.open_file(full, mode="rb") as fd: items.append((rel, fd.read()))
-    if qc.collection_exists(COLL): qc.delete_collection(COLL)
-    qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
-    total, skipped = 0, 0
-    for rel, data in items:
-        n = index_file(rel, data)
-        total += n; skipped += 0 if n else 1
-    return {"files": len(items), "skipped": skipped, "chunks": total}
+                full_p = dp + "\\" + fn
+                rel = full_p[len(root):].strip("\\").replace("\\", "/")
+                try: current[rel] = file_sig(smbclient.stat(full_p))
+                except Exception: current[rel] = None
+
+    # 2) Voll-Reindex: Collection neu aufbauen. Sonst: bestehende Signaturen vergleichen
+    if full:
+        if qc.collection_exists(COLL): qc.delete_collection(COLL)
+        qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
+        existing = {}
+    else:
+        existing = indexed_sigs()
+
+    # 3) Entfernte Dateien aus dem Index loeschen
+    removed = [rel for rel in existing if rel not in current]
+    for rel in removed: delete_source(rel)
+
+    # 4) Nur geaenderte/neue Dateien herunterladen und neu indizieren
+    to_index = [rel for rel, sig in current.items() if full or existing.get(rel) != sig]
+    unchanged = len(current) - len(to_index)
+    added = updated = skipped = chunks = 0
+    for i, rel in enumerate(to_index, 1):
+        set_indexing(True, f"{i}/{len(to_index)}: {rel}")
+        full_p = root + "\\" + rel.replace("/", "\\")
+        try:
+            with smbclient.open_file(full_p, mode="rb") as fd: data = fd.read()
+        except Exception as ex:
+            print(f"[Warn] {rel}: {ex}"); skipped += 1; continue
+        was_known = rel in existing
+        n = index_file(rel, data, current.get(rel))
+        chunks += n
+        if not n: skipped += 1
+        elif was_known: updated += 1
+        else: added += 1
+
+    return {"files": len(current), "added": added, "updated": updated, "unchanged": unchanged,
+            "removed": len(removed), "skipped": skipped, "chunks": chunks}
 
 def indexed_count():
     try: return qc.count(COLL).count
@@ -192,10 +242,70 @@ def gen_gemini(cfg, q, ctx):
     return (client.models.generate_content(model=en["model"], contents=f"{SYSTEM}\n\nKontext:\n{ctx}\n\nFrage: {q}").text or "").strip()
 GENERATORS = {"local": gen_local, "claude": gen_claude, "openai": gen_openai, "gemini": gen_gemini}
 
+# ---- Multi-Turn: Verlauf in Chat-Nachrichten umwandeln ----
+HISTORY_TURNS = 8  # wie viele vorherige Nachrichten in den Kontext genommen werden
+def build_messages(history, q, ctx):
+    msgs = [{"role": "system", "content": SYSTEM}]
+    for h in (history or [])[-HISTORY_TURNS:]:
+        content = (h.get("content") or "").strip()
+        role = h.get("role")
+        if not content: continue
+        if role == "user": msgs.append({"role": "user", "content": content})
+        elif role in ("assistant", "bot"): msgs.append({"role": "assistant", "content": content})
+    msgs.append({"role": "user", "content": f"Kontext:\n{ctx}\n\nFrage: {q}"})
+    return msgs
+
+def _flatten(messages):
+    lines = []
+    for m in messages:
+        if m["role"] == "system": lines.append(m["content"])
+        elif m["role"] == "user": lines.append(f"Frage/Nutzer:\n{m['content']}")
+        else: lines.append(f"Assistent:\n{m['content']}")
+    return "\n\n".join(lines)
+
+# ---- Streaming-Generatoren: liefern Text-Stuecke (Deltas) ----
+def stream_local(cfg, messages):
+    en = cfg["engines"]["local"]
+    body = json.dumps({"model": en["model"], "messages": messages, "stream": True}).encode()
+    req = urllib.request.Request(en["ollama_url"] + "/api/chat", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        for line in r:
+            line = line.strip()
+            if not line: continue
+            try: obj = json.loads(line)
+            except Exception: continue
+            piece = (obj.get("message") or {}).get("content", "")
+            if piece: yield piece
+            if obj.get("done"): break
+def stream_claude(cfg, messages):
+    import anthropic
+    en = cfg["engines"]["claude"]; client = anthropic.Anthropic(api_key=engine_key(cfg, "claude"))
+    sys = messages[0]["content"] if messages and messages[0]["role"] == "system" else SYSTEM
+    msgs = [m for m in messages if m["role"] != "system"]
+    with client.messages.stream(model=en["model"], max_tokens=1024, system=sys, messages=msgs) as s:
+        for text in s.text_stream: yield text
+def stream_openai(cfg, messages):
+    from openai import OpenAI
+    en = cfg["engines"]["openai"]; client = OpenAI(api_key=engine_key(cfg, "openai"))
+    s = client.chat.completions.create(model=en["model"], messages=messages, stream=True)
+    for ch in s:
+        d = ch.choices[0].delta.content if ch.choices else None
+        if d: yield d
+def stream_gemini(cfg, messages):
+    from google import genai
+    en = cfg["engines"]["gemini"]; client = genai.Client(api_key=engine_key(cfg, "gemini"))
+    for ch in client.models.generate_content_stream(model=en["model"], contents=_flatten(messages)):
+        if getattr(ch, "text", None): yield ch.text
+STREAMERS = {"local": stream_local, "claude": stream_claude, "openai": stream_openai, "gemini": stream_gemini}
+
+def sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
 app = FastAPI(title="Tech-IT Wissens-Chat")
 class AskReq(BaseModel):
     question: str
     engine: Optional[str] = None
+    history: Optional[List[dict]] = None
 class ConfigIn(BaseModel):
     default_engine: Optional[str] = None
     retrieval: Optional[dict] = None
@@ -222,6 +332,28 @@ def ask(r: AskReq):
     try: answer = GENERATORS[e](cfg, r.question, context)
     except Exception as ex: return JSONResponse({"error": f"Fehler bei Engine '{LABELS.get(e, e)}': {ex}"}, status_code=500)
     return {"answer": answer, "sources": sources, "engine": LABELS[e]}
+
+@app.post("/api/ask/stream")
+def ask_stream(r: AskReq):
+    cfg = load_config(); e = r.engine or cfg["default_engine"]
+    if e not in STREAMERS or not engine_available(cfg, e):
+        def err():
+            yield sse("error", {"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."})
+        return StreamingResponse(err(), media_type="text/event-stream")
+    hits = retrieve(r.question, int(cfg["retrieval"].get("top_k", 4)))
+    context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
+    sources = sorted({h.payload["source"] for h in hits})
+    messages = build_messages(r.history, r.question, context)
+    def gen():
+        yield sse("meta", {"sources": sources, "engine": LABELS[e]})
+        try:
+            for piece in STREAMERS[e](cfg, messages):
+                yield sse("delta", {"text": piece})
+        except Exception as ex:
+            yield sse("error", {"error": f"Fehler bei Engine '{LABELS.get(e, e)}': {ex}"})
+        yield sse("done", {})
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.get("/api/config")
 def get_config():
@@ -267,9 +399,9 @@ def api_status():
     st["indexed_chunks"] = indexed_count(); return st
 
 @app.post("/api/ingest")
-def api_ingest():
-    set_indexing(True, "QNAP wird komplett neu eingelesen")
-    try: return {"ok": True, **ingest_smb()}
+def api_ingest(full: bool = False):
+    set_indexing(True, "QNAP wird komplett neu eingelesen" if full else "QNAP wird abgeglichen…")
+    try: return {"ok": True, "full": full, **ingest_smb(full=full)}
     except Exception as ex: return JSONResponse({"error": str(ex)}, status_code=400)
     finally: set_indexing(False)
 
@@ -291,12 +423,15 @@ async def api_upload(files: List[UploadFile] = File(...)):
         if not name.lower().endswith(EXTS):
             results.append({"file": name, "error": "Dateityp nicht unterstuetzt"}); continue
         data = await uf.read()
+        dest = base + "\\" + name
         try:
-            with smbclient.open_file(base + "\\" + name, mode="wb") as fd: fd.write(data)
+            with smbclient.open_file(dest, mode="wb") as fd: fd.write(data)
         except Exception as ex:
             results.append({"file": name, "error": f"Schreiben auf QNAP fehlgeschlagen: {ex}"}); continue
         rel = (sub.replace("\\", "/") + "/" if sub else "") + name
-        try: results.append({"file": name, "chunks": index_file(rel, data)})
+        try: sig = file_sig(smbclient.stat(dest))
+        except Exception: sig = None
+        try: results.append({"file": name, "chunks": index_file(rel, data, sig)})
         except Exception as ex: results.append({"file": name, "error": f"Indexierung fehlgeschlagen: {ex}"})
     return {"ok": True, "results": results, "indexed_chunks": indexed_count()}
 

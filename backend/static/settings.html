@@ -50,9 +50,11 @@
           <div class="row"><label>Passwort <span id="smb_pwstate"></span></label><input id="smb_pw" type="password" autocomplete="new-password" placeholder="Passwort"></div>
         </div>
         <div class="source-actions">
-          <button id="ingest" type="button" class="secondary">Alles neu einlesen</button>
+          <button id="ingest" type="button" class="secondary">Abgleichen (nur &Auml;nderungen)</button>
+          <button id="ingest-full" type="button" class="secondary">Voll-Neuaufbau</button>
           <span id="ingest-status" class="status"></span>
         </div>
+        <p class="note">&bdquo;Abgleichen&ldquo; liest nur neue oder ge&auml;nderte Dateien ein und entfernt gel&ouml;schte &ndash; deutlich schneller. &bdquo;Voll-Neuaufbau&ldquo; verwirft den Index und liest alles komplett neu.</p>
       </section>
 
       <section class="card">

@@ -111,15 +111,30 @@ $("save").addEventListener("click", async () => {
   try{ await saveConfig(); statusEl.textContent = "✓ Gespeichert"; } catch(e){ statusEl.textContent = "⚠️ " + e.message; }
   setTimeout(() => statusEl.textContent = "", 3000);
 });
-$("ingest").addEventListener("click", async () => {
+async function runIngest(full){
   const st = $("ingest-status"); $("smb_enabled").checked = true;
-  st.textContent = "Speichere & lese komplett ein… (kann dauern)"; $("ingest").disabled = true;
+  st.textContent = full ? "Speichere & lese komplett neu ein… (kann dauern)" : "Speichere & gleiche ab…";
+  $("ingest").disabled = true; $("ingest-full").disabled = true;
   try{
     await saveConfig();
-    const res = await fetch("/api/ingest", {method:"POST"}); const d = await res.json();
-    if (!res.ok) st.textContent = "⚠️ " + (d.error||"Fehler");
-    else { st.textContent = `✓ ${d.files} Datei(en), ${d.chunks} Ausschnitte indiziert` + (d.skipped?` (${d.skipped} leer)`:""); loadDocuments(); }
-  }catch(e){ st.textContent = "⚠️ " + e.message; } finally { $("ingest").disabled = false; }
+    const res = await fetch("/api/ingest" + (full ? "?full=true" : ""), {method:"POST"});
+    const d = await res.json();
+    if (!res.ok){ st.textContent = "⚠️ " + (d.error||"Fehler"); return; }
+    const parts = [];
+    if (d.added)     parts.push(`${d.added} neu`);
+    if (d.updated)   parts.push(`${d.updated} aktualisiert`);
+    if (d.removed)   parts.push(`${d.removed} entfernt`);
+    if (d.unchanged) parts.push(`${d.unchanged} unverändert`);
+    if (d.skipped)   parts.push(`${d.skipped} übersprungen`);
+    const summary = parts.length ? parts.join(" · ") : "keine Änderungen";
+    st.textContent = `✓ ${d.files} Datei(en): ${summary} · ${d.chunks} Ausschnitte neu indiziert`;
+    loadDocuments();
+  }catch(e){ st.textContent = "⚠️ " + e.message; }
+  finally { $("ingest").disabled = false; $("ingest-full").disabled = false; }
+}
+$("ingest").addEventListener("click", () => runIngest(false));
+$("ingest-full").addEventListener("click", () => {
+  if (confirm("Voll-Neuaufbau: Der komplette Index wird verworfen und alle Dateien neu eingelesen. Fortfahren?")) runIngest(true);
 });
 
 // --- Status-Banner (Indexierung laeuft) ---
