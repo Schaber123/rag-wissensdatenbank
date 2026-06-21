@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+python-multipart
+qdrant-client
+fastembed
+anthropic
+openai
+google-genai
+pypdf
+python-docx
+openpyxl
+xlrd
+python-pptx
+pymupdf
+pytesseract
+Pillow
+smbprotocol

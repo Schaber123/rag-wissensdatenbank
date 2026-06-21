@@ -61,6 +61,16 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
   - **Modellwechsel = anderes Vektorformat** → danach **Voll-Neuaufbau** nötig (`/api/ingest?full=true`).
   - E5-Modelle bräuchten `query:`/`passage:`-Präfixe (`IS_E5` im Code); bei MiniLM aus (korrekt).
 - **Chunking:** 1000 Zeichen, 150 Überlappung.
+- **Unterstützte Dateitypen** (`EXTS` / `read_text_bytes`):
+  PDF, Word `.docx`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`, CSV, Text `.txt`/`.md`,
+  Bilder `.png/.jpg/.jpeg/.tif/.tiff/.bmp/.gif`.
+  - **OCR (Tesseract, `deu+eng`):** Bilder werden per OCR ausgelesen; bei PDFs greift OCR als **Fallback**,
+    wenn die normale Textextraktion < 50 Zeichen liefert (= vermutlich gescannt). Normale Text-PDFs bleiben schnell.
+  - OCR ist CPU-intensiv → gescannte Mehrseiter brauchen auf der VM spürbar Zeit (läuft aber asynchron).
+  - **Achtung:** Auch Bilddateien auf dem SMB-Share werden beim Abgleich per OCR indiziert — keine großen
+    Bildbestände (Logos/Fotos) in den indizierten Ordner legen, sonst unnötige OCR-Last. Sprache via `OCR_LANG`.
+  - Tesseract + Sprachpakete werden im Docker-Image installiert (`backend/Dockerfile`) →
+    nach Änderungen an Dockerfile/requirements **`docker compose build backend`** nötig (nicht nur `--reload`).
 
 ---
 

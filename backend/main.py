@@ -15,7 +15,9 @@ CACHE     = os.environ.get("FASTEMBED_CACHE", "/models")
 PREFERRED = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 FALLBACK  = "intfloat/multilingual-e5-large"
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/srv/config.json")
-EXTS = (".md", ".txt", ".pdf", ".docx")
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif")
+EXTS = (".md", ".txt", ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx") + IMG_EXTS
+OCR_LANG = os.environ.get("OCR_LANG", "deu+eng")
 
 DEFAULTS = {
     "default_engine": "local",
@@ -102,19 +104,87 @@ def rank_sources(hits):
     top = ranked[0][1]
     return [{"source": s, "score": round(sc, 3)} for s, sc in ranked if sc >= top - SOURCE_MARGIN]
 
+def ocr_image_bytes(data):
+    import pytesseract
+    from PIL import Image
+    return pytesseract.image_to_string(Image.open(io.BytesIO(data)), lang=OCR_LANG)
+
+def ocr_pdf_bytes(data, dpi=200):
+    """Gescanntes PDF: jede Seite rendern und per Tesseract OCR auslesen."""
+    import fitz  # PyMuPDF
+    import pytesseract
+    from PIL import Image
+    parts = []
+    doc = fitz.open(stream=data, filetype="pdf")
+    try:
+        for page in doc:
+            pix = page.get_pixmap(dpi=dpi)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            parts.append(pytesseract.image_to_string(img, lang=OCR_LANG))
+    finally:
+        doc.close()
+    return "\n".join(parts)
+
 def read_text_bytes(name, data):
     ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
     try:
         if ext in (".md", ".txt"): return data.decode("utf-8", "ignore")
         if ext == ".pdf":
             from pypdf import PdfReader
-            return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
+            txt = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
+            if len(txt.strip()) < 50:  # kaum Text -> vermutlich gescannt -> OCR
+                try: txt = ocr_pdf_bytes(data)
+                except Exception as ex: print(f"[OCR-Warn] {name}: {ex}")
+            return txt
         if ext == ".docx":
             import docx
             d = docx.Document(io.BytesIO(data)); parts = [p.text for p in d.paragraphs]
             for t in d.tables:
                 for row in t.rows: parts.append(" | ".join(c.text for c in row.cells))
             return "\n".join(parts)
+        if ext == ".xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            parts = []
+            for ws in wb.worksheets:
+                parts.append(f"# {ws.title}")
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) for c in row if c not in (None, "")]
+                    if cells: parts.append(" | ".join(cells))
+            return "\n".join(parts)
+        if ext == ".xls":
+            import xlrd
+            book = xlrd.open_workbook(file_contents=data); parts = []
+            for sh in book.sheets():
+                parts.append(f"# {sh.name}")
+                for r in range(sh.nrows):
+                    cells = [str(sh.cell_value(r, c)) for c in range(sh.ncols) if sh.cell_value(r, c) not in ("", None)]
+                    if cells: parts.append(" | ".join(cells))
+            return "\n".join(parts)
+        if ext == ".csv":
+            import csv as _csv
+            text = data.decode("utf-8", "ignore")
+            try: delim = _csv.Sniffer().sniff(text[:2048], delimiters=",;\t|").delimiter
+            except Exception: delim = ";" if text[:2048].count(";") >= text[:2048].count(",") else ","
+            rows = _csv.reader(io.StringIO(text), delimiter=delim)
+            return "\n".join(" | ".join(c for c in row if c) for row in rows if any(row))
+        if ext == ".pptx":
+            from pptx import Presentation
+            prs = Presentation(io.BytesIO(data)); parts = []
+            for i, slide in enumerate(prs.slides, 1):
+                parts.append(f"# Folie {i}")
+                for shape in slide.shapes:
+                    if shape.has_text_frame:
+                        for p in shape.text_frame.paragraphs:
+                            t = "".join(run.text for run in p.runs)
+                            if t.strip(): parts.append(t)
+                    if shape.has_table:
+                        for row in shape.table.rows:
+                            parts.append(" | ".join(c.text for c in row.cells))
+            return "\n".join(parts)
+        if ext in IMG_EXTS:
+            try: return ocr_image_bytes(data)
+            except Exception as ex: print(f"[OCR-Warn] {name}: {ex}")
     except Exception as ex: print(f"[Warn] {name}: {ex}")
     return ""
 
