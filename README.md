@@ -5,7 +5,33 @@ aus den hinterlegten Quellen (Retrieval-Augmented Generation). Mehrere LLM-Engin
 wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 
 > Diese Doku enthält **keine Secrets**. API-Keys und das SMB-Passwort liegen ausschließlich
-> in `config.json` auf dem Server (siehe „Sicherheit").
+> in `config.json` / `.env` auf dem Server (siehe „Sicherheit").
+
+---
+
+## 0. Stand & nächste Schritte (zuletzt: 2026-06-21)
+
+**Funktioniert / fertig:**
+- Multi-Engine-Chat (lokal Mac/Ollama, OpenAI, Claude, Gemini) mit **SSE-Streaming**, **Multi-Turn-Verlauf**, **Markdown**.
+- **Inkrementelles Indexieren** (Signatur Größe+mtime) + Voll-Neuaufbau, **asynchron** (kein „Load failed" mehr).
+- **Schnelles Embedding** (MiniLM, 384 Dim) — Indexieren in Sekunden statt Minuten.
+- **Quellen** relevanzgefiltert, nach Score sortiert, **anklickbar** (öffnet Datei vom QNAP, PDF inline).
+- **Dateitypen:** PDF, Word, Excel, PowerPoint, CSV, Text, Bilder — inkl. **OCR** (Tesseract deu+eng) für Scans.
+- **Lokale Engine via Netbird** (Mac `100.94.178.115`), **Ollama-Autostart** (LaunchAgent auf dem Mac).
+- API-Keys werden **im Webinterface** verwaltet (config.json); `.env` als leerer Fallback.
+- Settings: „Ollama-Modelle abrufen", Hilfetext zu `top_k`.
+
+**Offene Punkte / mögliche nächste Schritte:**
+- [ ] **OpenAI-Key rotieren:** neuen Key in der OpenAI-Konsole erzeugen, alten widerrufen, neuen im Webinterface eintragen
+      (aktuell hat OpenAI **keinen** Key → Default-Engine-Frage schlägt fehl, bis Key gesetzt; lokale Engine läuft).
+- [ ] **SMB-Passwort** liegt noch im Klartext in `config.json` — optional analog zu den API-Keys in `.env`.
+- [ ] **Bilder vom Share:** werden beim Abgleich per OCR mitindiziert — bei Bedarf auf „nur Upload" beschränken.
+- [ ] **Retrieval-Qualität:** falls MiniLM mal zu ungenau → auf `paraphrase-multilingual-mpnet-base-v2` (768 Dim) wechseln
+      (Voll-Neuaufbau nötig). `top_k` aktuell 4.
+- [ ] **Kein Auth** auf der Web-App (für externen Betrieb ggf. nachrüsten).
+
+**Wie wir weitermachen:** Lokale Arbeitskopie + Git-Historie unter `rag-app/`. Deploy = `scp` (Reload) bzw.
+`docker compose build backend && up -d` bei Dockerfile/requirements-Änderungen. Details unten.
 
 ---
 
