@@ -118,6 +118,8 @@ a.src:hover{border-color:var(--primary);color:#fff}
 
 /* --- Datenquelle / Einlesen --- */
 .note{font-size:.78rem;color:var(--muted);margin:.2rem 0 .8rem}
+.hint-list{font-size:.78rem;color:var(--muted);margin:.2rem 0 .6rem;padding-left:1.1rem;display:flex;flex-direction:column;gap:.25rem}
+.hint-list b{color:var(--text);font-weight:600}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .9rem}
 @media(max-width:560px){.grid2{grid-template-columns:1fr}}
 .source-actions{display:flex;align-items:center;gap:1rem;margin-top:.8rem}

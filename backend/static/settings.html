@@ -76,6 +76,16 @@
         <h2>Allgemein</h2>
         <div class="row"><label for="top_k">Trefferanzahl (Kontext-Chunks pro Frage)</label>
           <input id="top_k" type="number" min="1" max="12" step="1"></div>
+        <p class="note">
+          Legt fest, wie viele Text-Ausschnitte aus deinen Dokumenten pro Frage gesucht und der KI
+          als Kontext mitgegeben werden. Die Antwort wird ausschlie&szlig;lich aus diesen Ausschnitten gebildet.
+        </p>
+        <ul class="hint-list">
+          <li><b>Niedrig (2&ndash;3):</b> fokussierter, schneller, g&uuml;nstiger &ndash; kann aber relevante Stellen verpassen.</li>
+          <li><b>4 (Standard):</b> guter Wert f&uuml;r die meisten Fragen.</li>
+          <li><b>Hoch (6&ndash;12):</b> mehr Kontext, f&auml;ngt verstreute Infos besser ein &ndash; aber mehr Rauschen und langsamer.</li>
+        </ul>
+        <p class="note">Faustregel: wenige/kurze Dokumente &rarr; 3&ndash;4. Viele oder lange Dokumente &rarr; 6&ndash;8.</p>
       </section>
     </section>
 
