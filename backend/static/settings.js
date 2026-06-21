@@ -146,45 +146,69 @@ $("save").addEventListener("click", async () => {
   try{ await saveConfig(); statusEl.textContent = "✓ Gespeichert"; } catch(e){ statusEl.textContent = "⚠️ " + e.message; }
   setTimeout(() => statusEl.textContent = "", 3000);
 });
+function ingestSummary(d){
+  const parts = [];
+  if (d.added)     parts.push(`${d.added} neu`);
+  if (d.updated)   parts.push(`${d.updated} aktualisiert`);
+  if (d.removed)   parts.push(`${d.removed} entfernt`);
+  if (d.unchanged) parts.push(`${d.unchanged} unverändert`);
+  if (d.skipped)   parts.push(`${d.skipped} übersprungen`);
+  const summary = parts.length ? parts.join(" · ") : "keine Änderungen";
+  return `✓ ${d.files} Datei(en): ${summary} · ${d.chunks} Ausschnitte neu indiziert`;
+}
 async function runIngest(full){
   const st = $("ingest-status"); $("smb_enabled").checked = true;
-  st.textContent = full ? "Speichere & lese komplett neu ein… (kann dauern)" : "Speichere & gleiche ab…";
-  $("ingest").disabled = true; $("ingest-full").disabled = true;
+  st.textContent = "Speichere…"; $("ingest").disabled = true; $("ingest-full").disabled = true;
   try{
     await saveConfig();
+    // Ingest laeuft serverseitig im Hintergrund -> Request kehrt sofort zurueck
     const res = await fetch("/api/ingest" + (full ? "?full=true" : ""), {method:"POST"});
-    const d = await res.json();
-    if (!res.ok){ st.textContent = "⚠️ " + (d.error||"Fehler"); return; }
-    const parts = [];
-    if (d.added)     parts.push(`${d.added} neu`);
-    if (d.updated)   parts.push(`${d.updated} aktualisiert`);
-    if (d.removed)   parts.push(`${d.removed} entfernt`);
-    if (d.unchanged) parts.push(`${d.unchanged} unverändert`);
-    if (d.skipped)   parts.push(`${d.skipped} übersprungen`);
-    const summary = parts.length ? parts.join(" · ") : "keine Änderungen";
-    st.textContent = `✓ ${d.files} Datei(en): ${summary} · ${d.chunks} Ausschnitte neu indiziert`;
-    loadDocuments();
-  }catch(e){ st.textContent = "⚠️ " + e.message; }
-  finally { $("ingest").disabled = false; $("ingest-full").disabled = false; }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok){
+      st.textContent = "⚠️ " + (d.error || "Fehler");
+      $("ingest").disabled = false; $("ingest-full").disabled = false; return;
+    }
+    st.textContent = full ? "⏳ Voll-Neuaufbau gestartet…" : "⏳ Abgleich gestartet…";
+    // Fortschritt & Ergebnis zeigt ab jetzt pollStatus (Buttons bleiben bis Ende gesperrt)
+  }catch(e){
+    st.textContent = "⚠️ " + e.message;
+    $("ingest").disabled = false; $("ingest-full").disabled = false;
+  }
 }
 $("ingest").addEventListener("click", () => runIngest(false));
 $("ingest-full").addEventListener("click", () => {
   if (confirm("Voll-Neuaufbau: Der komplette Index wird verworfen und alle Dateien neu eingelesen. Fortfahren?")) runIngest(true);
 });
 
-// --- Status-Banner (Indexierung laeuft) ---
+// --- Status-Banner + Ergebnisanzeige (Indexierung laeuft asynchron) ---
 function ensureBanner(){
   let b = $("idx-banner");
   if (!b){ b = document.createElement("div"); b.id = "idx-banner"; b.className = "idx-banner"; b.style.display = "none";
            document.querySelector("main.settings").prepend(b); }
   return b;
 }
+let wasIndexing = false;
 async function pollStatus(){
   try{
     const s = await fetch("/api/status").then(r=>r.json());
     const b = ensureBanner();
     b.textContent = "⏳ Indexierung läuft… " + (s.detail||"");
     b.style.display = s.indexing ? "block" : "none";
+    const st = $("ingest-status");
+    if (s.indexing){
+      wasIndexing = true;
+      $("ingest").disabled = true; $("ingest-full").disabled = true;
+      if (st) st.textContent = "⏳ " + (s.detail || "läuft…");
+    } else if (wasIndexing){
+      // gerade fertig geworden
+      wasIndexing = false;
+      $("ingest").disabled = false; $("ingest-full").disabled = false;
+      if (st){
+        if (s.error) st.textContent = "⚠️ " + s.error;
+        else if (s.result) st.textContent = ingestSummary(s.result);
+      }
+      loadDocuments();
+    }
   }catch(e){}
 }
 setInterval(pollStatus, 3000); pollStatus();

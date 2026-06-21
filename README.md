@@ -53,9 +53,13 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
 
 - **Docker-Compose:** `/opt/rag/docker-compose.yml` — Services `qdrant`, `backend`, optional `app` (Profil `tools`).
 - **Collection:** `rag_test` (Cosine).
-- **Embedding-Modell:** bevorzugt `BAAI/bge-m3`, Fallback `intfloat/multilingual-e5-large`
-  (aktuell aktiv ist der Fallback e5-large, da bge-m3 in der fastembed-Version nicht gelistet ist;
-  E5 nutzt `query:`/`passage:`-Präfixe, das ist im Code berücksichtigt).
+- **Embedding-Modell:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384 Dim, mehrsprachig),
+  gesetzt über `EMBED_MODEL` in `docker-compose.yml`.
+  - Gewählt wegen Tempo: auf der 4-Core-VM ~**0,01 s/Chunk** statt ~3 s/Chunk bei e5-large (Faktor ~300).
+  - `BAAI/bge-m3` wird von dieser fastembed-Version **nicht** unterstützt → lief früher auf dem langsamen
+    Fallback `intfloat/multilingual-e5-large`. Das war die Ursache für „hängende"/sehr langsame Indexierungen.
+  - **Modellwechsel = anderes Vektorformat** → danach **Voll-Neuaufbau** nötig (`/api/ingest?full=true`).
+  - E5-Modelle bräuchten `query:`/`passage:`-Präfixe (`IS_E5` im Code); bei MiniLM aus (korrekt).
 - **Chunking:** 1000 Zeichen, 150 Überlappung.
 
 ---
@@ -84,9 +88,14 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
   2. Bestehende Signaturen aus Qdrant lesen (`indexed_sigs()`).
   3. Entfernte Dateien aus dem Index löschen.
   4. **Nur geänderte/neue Dateien** herunterladen und neu indizieren.
-- Rückgabe: `{files, added, updated, unchanged, removed, skipped, chunks}`.
+- Rückgabe (in `STATE["result"]`): `{files, added, updated, unchanged, removed, skipped, chunks}`.
 - `full=True` verwirft die Collection und liest alles neu.
-- Fortschritt live über `/api/status` (`detail` = `i/n: dateiname`).
+- **Asynchron:** `/api/ingest` startet die Arbeit in einem Hintergrund-Thread und kehrt sofort zurück
+  (`{started:true}`). So blockiert ein großes/langsames Dokument nicht mehr den ganzen Prozess
+  (früher: synchroner Ingest → App unerreichbar → Browser „Load failed").
+- Fortschritt/Ergebnis live über `/api/status`: `{indexing, detail:"i/n: datei", result, error, indexed_chunks}`.
+  Das Frontend pollt alle 3 s und zeigt Fortschritt + Endergebnis; doppelte Starts werden mit HTTP 409 abgelehnt.
+- SMB-Verbindung mit `connection_timeout=20`, damit ein nicht erreichbarer Host nicht ewig blockiert.
 
 ### Streaming + Multi-Turn
 - `/api/ask/stream` liefert **Server-Sent Events**:

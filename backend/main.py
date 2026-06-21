@@ -33,7 +33,7 @@ ENV_KEYS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini":
 LABELS   = {"local": "Lokal · Mac", "claude": "Claude (Anthropic)", "openai": "ChatGPT (OpenAI)", "gemini": "Google Gemini"}
 ORDER    = ["local", "claude", "openai", "gemini"]
 _lock = threading.Lock()
-STATE = {"indexing": False, "detail": ""}
+STATE = {"indexing": False, "detail": "", "result": None, "error": None}
 _state_lock = threading.Lock()
 def set_indexing(on, detail=""):
     with _state_lock:
@@ -156,7 +156,8 @@ def indexed_sigs():
 def smb_connect(s):
     import smbclient
     smbclient.reset_connection_cache()
-    smbclient.register_session(s["host"].strip(), username=s["username"], password=s.get("password", ""))
+    smbclient.register_session(s["host"].strip(), username=s["username"], password=s.get("password", ""),
+                               connection_timeout=20)
     host = s["host"].strip(); share = s["share"].strip().strip("\\/")
     sub = (s.get("path") or "").strip().strip("\\/").replace("/", "\\")
     root = f"\\\\{host}\\{share}"
@@ -428,10 +429,25 @@ def api_status():
 
 @app.post("/api/ingest")
 def api_ingest(full: bool = False):
-    set_indexing(True, "QNAP wird komplett neu eingelesen" if full else "QNAP wird abgeglichen…")
-    try: return {"ok": True, "full": full, **ingest_smb(full=full)}
-    except Exception as ex: return JSONResponse({"error": str(ex)}, status_code=400)
-    finally: set_indexing(False)
+    # Asynchron: im Hintergrund-Thread starten, sofort zurueckkehren.
+    # Fortschritt + Ergebnis holt das Frontend ueber /api/status.
+    with _state_lock:
+        if STATE["indexing"]:
+            return JSONResponse({"error": "Es laeuft bereits eine Indexierung."}, status_code=409)
+        STATE["indexing"] = True
+        STATE["detail"] = "Start…"
+        STATE["result"] = None
+        STATE["error"] = None
+    def worker():
+        try:
+            res = ingest_smb(full=full)
+            with _state_lock: STATE["result"] = {"full": full, **res}
+        except Exception as ex:
+            with _state_lock: STATE["error"] = str(ex)
+        finally:
+            set_indexing(False)
+    threading.Thread(target=worker, daemon=True).start()
+    return {"ok": True, "started": True, "full": full}
 
 @app.get("/api/documents")
 def api_documents():
