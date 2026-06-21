@@ -18,7 +18,10 @@ function engineCard(id, en){
   let h = `<div class="card-head"><h2>${en.label}</h2>
     <label class="switch"><input type="checkbox" data-engine="${id}" data-field="enabled" ${en.enabled?"checked":""}><span>aktiv</span></label></div>
     <div class="row"><label>Modell</label><input type="text" data-engine="${id}" data-field="model" value="${en.model||""}"></div>`;
-  if (isLocal) h += `<div class="row"><label>Ollama-URL</label><input type="text" data-engine="${id}" data-field="ollama_url" value="${en.ollama_url||""}"></div>`;
+  if (isLocal) h += `<div class="row"><label>Ollama-URL</label>
+    <div class="inline"><input type="text" data-engine="${id}" data-field="ollama_url" value="${en.ollama_url||""}">
+      <button type="button" class="secondary" id="ollama-fetch">Modelle abrufen</button></div></div>
+    <div id="ollama-models" class="model-chips"></div>`;
   else {
     const ph = en.key_from_env ? "aus Umgebungsvariable" : (en.has_key ? "hinterlegt – leer lassen zum Behalten" : "API-Key eingeben");
     h += `<div class="row"><label>API-Key ${en.has_key?'<span class="ok">&#10003; vorhanden</span>':'<span class="warn">fehlt</span>'}</label>
@@ -49,6 +52,38 @@ enginesBox.addEventListener("input", e => {
     const cb = enginesBox.querySelector(`input[type=checkbox][data-engine="${el.dataset.engine}"][data-field="enabled"]`);
     if (cb) cb.checked = true;
   }
+});
+
+// Ollama-Modelle vom angegebenen Server abrufen
+enginesBox.addEventListener("click", async e => {
+  if (e.target.id !== "ollama-fetch") return;
+  const urlInput = enginesBox.querySelector('input[data-engine="local"][data-field="ollama_url"]');
+  const modelInput = enginesBox.querySelector('input[data-engine="local"][data-field="model"]');
+  const box = $("ollama-models");
+  const url = (urlInput.value || "").trim();
+  if (!url){ box.textContent = "Bitte zuerst eine Ollama-URL eingeben."; return; }
+  e.target.disabled = true; box.textContent = "Lade Modelle…";
+  try{
+    const d = await fetch("/api/ollama/models?url=" + encodeURIComponent(url)).then(r => r.json());
+    if (d.error){ box.textContent = "⚠️ " + d.error; return; }
+    if (!d.models || !d.models.length){ box.textContent = "Keine Modelle auf diesem Server gefunden."; return; }
+    box.innerHTML = "";
+    const hint = document.createElement("span"); hint.className = "muted";
+    hint.textContent = `${d.models.length} Modell(e) gefunden – zum Übernehmen anklicken: `;
+    box.appendChild(hint);
+    d.models.forEach(name => {
+      const c = document.createElement("button");
+      c.type = "button"; c.className = "chip" + (modelInput.value === name ? " active" : "");
+      c.textContent = name;
+      c.addEventListener("click", () => {
+        modelInput.value = name;
+        box.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+        c.classList.add("active");
+      });
+      box.appendChild(c);
+    });
+  }catch(err){ box.textContent = "⚠️ " + err.message; }
+  finally{ e.target.disabled = false; }
 });
 
 function buildPayload(){

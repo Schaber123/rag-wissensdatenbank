@@ -321,6 +321,20 @@ def engines():
         out.append({"id": e, "label": label, "available": engine_available(cfg, e), "default": cfg["default_engine"] == e})
     return out
 
+@app.get("/api/ollama/models")
+def ollama_models(url: str = ""):
+    url = (url or "").strip().rstrip("/")
+    if not url:
+        return JSONResponse({"error": "Keine Ollama-URL angegeben."}, status_code=400)
+    try:
+        req = urllib.request.Request(url + "/api/tags")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.load(r)
+        models = sorted(m.get("name") for m in data.get("models", []) if m.get("name"))
+        return {"models": models}
+    except Exception as ex:
+        return JSONResponse({"error": f"Ollama unter '{url}' nicht erreichbar: {ex}"}, status_code=400)
+
 @app.post("/api/ask")
 def ask(r: AskReq):
     cfg = load_config(); e = r.engine or cfg["default_engine"]

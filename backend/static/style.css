@@ -107,6 +107,14 @@ body{
 .actions button:hover{background:var(--primary-2)}
 .status{font-size:.85rem;color:var(--muted)}
 
+/* --- Ollama-Modelle abrufen --- */
+.inline{display:flex;gap:.5rem;align-items:stretch}
+.inline input{flex:1}
+.inline button.secondary{white-space:nowrap;padding:.55rem .9rem}
+.model-chips{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:-.3rem 0 .7rem;font-size:.85rem;color:var(--muted)}
+.model-chips .chip{padding:.35rem .7rem;font-size:.82rem}
+.model-chips .chip.active{border-color:var(--primary);color:#fff;background:rgba(79,70,229,.18)}
+
 /* --- Datenquelle / Einlesen --- */
 .note{font-size:.78rem;color:var(--muted);margin:.2rem 0 .8rem}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .9rem}
