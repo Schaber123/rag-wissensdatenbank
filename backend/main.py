@@ -371,14 +371,15 @@ def ask_stream(r: AskReq):
 
 @app.get("/api/config")
 def get_config():
-    cfg = load_config()
+    cfg = load_config(); raw = load_raw()
     out = {"default_engine": cfg["default_engine"], "retrieval": cfg["retrieval"], "engines": {}, "indexed_chunks": indexed_count()}
     for e in ORDER:
         en = cfg["engines"][e]; item = {"enabled": en.get("enabled", False), "model": en.get("model", ""), "label": LABELS[e]}
         if e == "local": item["ollama_url"] = en.get("ollama_url", "")
         else:
             item["has_key"] = bool(engine_key(cfg, e))
-            item["key_from_env"] = bool(not en.get("api_key") and os.environ.get(ENV_KEYS.get(e, "")))
+            # key_from_env anhand der Rohdaten (vor Env-Merge) bestimmen: kein Key in der Datei, aber in der Umgebung
+            item["key_from_env"] = bool(not raw["engines"][e].get("api_key") and os.environ.get(ENV_KEYS.get(e, "")))
         out["engines"][e] = item
     s = cfg["sources"]["smb"]
     out["sources"] = {"smb": {"enabled": s.get("enabled", False), "host": s.get("host", ""), "share": s.get("share", ""),

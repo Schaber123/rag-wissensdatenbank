@@ -1,0 +1,54 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  backend:
+    build: ./backend
+    image: rag-backend
+    container_name: rag-backend
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    # Secrets (API-Keys) kommen aus .env (nicht eingecheckt), nicht mehr aus config.json
+    env_file:
+      - .env
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - EMBED_MODEL=BAAI/bge-m3
+      - FASTEMBED_CACHE=/models
+      - OLLAMA_URL=http://192.168.1.193:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+    volumes:
+      - ./backend:/srv
+      - models:/models
+    ports:
+      - "80:8000"     # Standard-Port: http://192.168.1.211
+      - "8000:8000"   # alternativ mit Portangabe
+
+  app:
+    build: ./app
+    image: rag-app
+    depends_on:
+      - qdrant
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - EMBED_MODEL=BAAI/bge-m3
+      - FASTEMBED_CACHE=/models
+      - OLLAMA_URL=http://192.168.1.193:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+    volumes:
+      - ./data:/data
+      - ./app:/app
+      - models:/models
+    profiles: ["tools"]
+
+volumes:
+  qdrant_storage:
+  models:

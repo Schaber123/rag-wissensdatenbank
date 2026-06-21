@@ -174,10 +174,17 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
 
 ## 8. Sicherheit / offene Punkte
 
-- **Secrets im Klartext:** `config.json` enthält OpenAI-Key und SMB-Passwort im Klartext (gemountetes Volume).
-  → OpenAI-Key sollte **rotiert** werden; mittelfristig Secrets via Umgebungsvariablen (`OPENAI_API_KEY` etc., werden vom Code bereits gelesen) statt in der Datei.
+- **API-Keys jetzt via `.env`** (seit 2026-06-21): Keys liegen in `/opt/rag/.env` (Mode 600, nicht eingecheckt),
+  werden über `env_file` in den Backend-Container gereicht und vom Code gelesen, wenn in `config.json` kein
+  `api_key` steht. `config.json` enthält **keine** API-Keys mehr. Vorlage: `.env.example`.
+  - Key ändern/rotieren: Wert in `/opt/rag/.env` setzen, dann `docker restart rag-backend`.
+  - **Offen:** Der ursprüngliche OpenAI-Key war im Klartext exponiert → in der OpenAI-Konsole **neuen Key erzeugen + alten widerrufen**, neuen Wert in `.env` eintragen.
+- **SMB-Passwort** steht weiterhin im Klartext in `config.json` (gemountetes Volume) — könnte analog in `.env` wandern.
 - **Kein Auth** auf der Web-App — jeder im erreichbaren Netz kann sie nutzen. Für externen Betrieb ggf. Zugriffsschutz vorsehen.
 - **Ollama an 0.0.0.0** ist im LAN **und** Mesh erreichbar. Bei Bedarf gezielt auf die Netbird-IP binden.
+
+> **Deploy-Tipp:** Nach `scp` der `main.py` greift `--reload` meist automatisch. Hängt ein Request nach
+> mehreren schnellen Edits/Recreate (HTTP 000 / Timeout), hilft `docker restart rag-backend`.
 
 ---
 

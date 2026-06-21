@@ -1,0 +1,7 @@
+# Secrets – niemals einchecken
+.env
+backend/config.json
+
+# Python
+__pycache__/
+*.pyc
