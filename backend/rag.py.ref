@@ -1,0 +1,129 @@
+import os, sys, glob, uuid, json, urllib.request
+from fastembed import TextEmbedding
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+
+QDRANT   = os.environ.get("QDRANT_URL", "http://qdrant:6333")
+COLL     = os.environ.get("COLLECTION", "rag_test")
+DATA     = os.environ.get("DATA_DIR", "/data")
+PREFERRED= os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
+FALLBACK = "intfloat/multilingual-e5-large"
+CACHE    = os.environ.get("FASTEMBED_CACHE", "/models")
+OLLAMA   = os.environ.get("OLLAMA_URL", "http://192.168.1.193:11434")
+OMODEL   = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
+
+def pick_model():
+    supported = {m["model"] for m in TextEmbedding.list_supported_models()}
+    return PREFERRED if PREFERRED in supported else FALLBACK
+
+MODEL = pick_model()
+if MODEL != PREFERRED:
+    print(f"[Hinweis] {PREFERRED} nicht in FastEmbed -> nutze {MODEL}")
+EMB   = TextEmbedding(model_name=MODEL, cache_dir=CACHE)
+IS_E5 = "e5" in MODEL.lower()
+
+def emb_passages(texts):
+    xs = [f"passage: {t}" for t in texts] if IS_E5 else list(texts)
+    return [v.tolist() for v in EMB.embed(xs)]
+
+def emb_query(text):
+    x = f"query: {text}" if IS_E5 else text
+    return list(EMB.embed([x]))[0].tolist()
+
+def read_text(fp):
+    ext = fp.lower().rsplit(".", 1)[-1]
+    try:
+        if ext in ("md", "txt"):
+            return open(fp, encoding="utf-8", errors="ignore").read()
+        if ext == "pdf":
+            from pypdf import PdfReader
+            r = PdfReader(fp)
+            return "\n".join((p.extract_text() or "") for p in r.pages)
+        if ext == "docx":
+            import docx
+            d = docx.Document(fp)
+            parts = [p.text for p in d.paragraphs]
+            for t in d.tables:
+                for row in t.rows:
+                    parts.append(" | ".join(c.text for c in row.cells))
+            return "\n".join(parts)
+    except Exception as ex:
+        print(f"[Warnung] {fp}: {ex}")
+    return ""
+
+def list_files():
+    pats = ("*.md", "*.txt", "*.pdf", "*.docx")
+    files = []
+    for p in pats:
+        files += glob.glob(f"{DATA}/**/{p}", recursive=True)
+    return sorted(set(files))
+
+def chunk(text, size=1000, overlap=150):
+    text = text.strip()
+    out, i = [], 0
+    while i < len(text):
+        piece = text[i:i+size].strip()
+        if piece:
+            out.append(piece)
+        i += size - overlap
+    return out
+
+def retrieve(q, k=4):
+    client = QdrantClient(url=QDRANT)
+    return client.query_points(COLL, query=emb_query(q), limit=k, with_payload=True).points
+
+def ollama_generate(prompt, system):
+    body = json.dumps({"model": OMODEL, "prompt": prompt, "system": system, "stream": False}).encode()
+    req = urllib.request.Request(OLLAMA + "/api/generate", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.load(r)["response"].strip()
+
+def cmd_ingest():
+    client = QdrantClient(url=QDRANT)
+    dim = len(emb_query("test"))
+    if client.collection_exists(COLL):
+        client.delete_collection(COLL)
+    client.create_collection(COLL, vectors_config=VectorParams(size=dim, distance=Distance.COSINE))
+    files = list_files()
+    points, skipped = [], 0
+    for fp in files:
+        src = os.path.relpath(fp, DATA)
+        tenant = src.split(os.sep)[0] if os.sep in src else "intern"
+        chs = chunk(read_text(fp))
+        if not chs:
+            skipped += 1
+            continue
+        for ch, v in zip(chs, emb_passages(chs)):
+            points.append(PointStruct(id=str(uuid.uuid4()), vector=v,
+                          payload={"text": ch, "source": src, "tenant": tenant}))
+    if points:
+        client.upsert(COLL, points=points)
+    print(f"Modell={MODEL}  Dim={dim}  Dateien={len(files)} (leer/uebersprungen={skipped})  Chunks={len(points)}")
+
+def cmd_search(q):
+    print(f"\nFrage: {q}\nModell: {MODEL}\n" + "-"*64)
+    for i, p in enumerate(retrieve(q, 3), 1):
+        txt = " ".join(p.payload["text"].split())[:220]
+        print(f"#{i}  score={p.score:.3f}  quelle={p.payload['source']}")
+        print("    " + txt + "...\n")
+
+def cmd_ask(q):
+    hits = retrieve(q, 4)
+    context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
+    system = ("Du bist ein praeziser Assistent fuer Tech-IT Consulting. Beantworte die Frage "
+              "AUSSCHLIESSLICH anhand des bereitgestellten Kontexts auf Deutsch. Wenn die Antwort "
+              "nicht im Kontext steht, sage das ehrlich. Erfinde nichts.")
+    prompt = f"Kontext:\n{context}\n\nFrage: {q}\n\nAntwort:"
+    print(f"\nFrage:  {q}\nEngine: Ollama / {OMODEL}\n" + "="*64)
+    print(ollama_generate(prompt, system))
+    print("\n" + "-"*64 + "\nGenutzte Quellen: " + ", ".join(sorted({h.payload["source"] for h in hits})))
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "ask"
+    arg = " ".join(sys.argv[2:])
+    if cmd == "ingest":
+        cmd_ingest()
+    elif cmd == "search":
+        cmd_search(arg or "Wie laeuft das Kunden-Onboarding ab?")
+    else:
+        cmd_ask(arg or "Wie laeuft das Kunden-Onboarding ab?")

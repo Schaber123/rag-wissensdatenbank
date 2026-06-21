@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tech-IT · Wissens-Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="logo.png" alt="Tech-IT Consulting" class="logo">
+      <span class="brand-text">Wissens-Chat</span>
+    </div>
+    <div class="topbar-right">
+      <div class="engine-box">
+        <label for="engine">Engine</label>
+        <select id="engine"></select>
+      </div>
+      <a class="gear" href="settings.html" title="Einstellungen" aria-label="Einstellungen">&#9881;</a>
+    </div>
+  </header>
+
+  <main id="chat" class="chat">
+    <div class="welcome">
+      <h1>Frag deine Dokumente</h1>
+      <p>Stelle eine Frage zu deinen internen Unterlagen. Die Antwort wird ausschliesslich aus den hinterlegten Quellen erzeugt &ndash; und bleibt lokal.</p>
+      <div class="examples">
+        <button class="chip" data-q="Wie oft werden die Server gesichert und wie lange werden Backups aufbewahrt?">Backup-Intervall?</button>
+        <button class="chip" data-q="Welche Schritte gibt es beim Onboarding eines neuen Kunden?">Kunden-Onboarding?</button>
+        <button class="chip" data-q="Wie werden Angebote erstellt?">Angebotserstellung?</button>
+      </div>
+    </div>
+  </main>
+
+  <form id="composer" class="composer">
+    <input id="q" type="text" placeholder="Frage zu deinen Dokumenten&hellip;" autocomplete="off" required>
+    <button id="send" type="submit" aria-label="Senden">Senden</button>
+  </form>
+
+  <footer class="footer">
+    &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

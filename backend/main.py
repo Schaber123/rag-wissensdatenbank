@@ -1,0 +1,303 @@
+import os, io, json, uuid, urllib.request, threading
+from typing import Optional, List
+from fastapi import FastAPI, UploadFile, File
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from fastembed import TextEmbedding
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+
+QDRANT    = os.environ.get("QDRANT_URL", "http://qdrant:6333")
+COLL      = os.environ.get("COLLECTION", "rag_test")
+CACHE     = os.environ.get("FASTEMBED_CACHE", "/models")
+PREFERRED = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
+FALLBACK  = "intfloat/multilingual-e5-large"
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "/srv/config.json")
+EXTS = (".md", ".txt", ".pdf", ".docx")
+
+DEFAULTS = {
+    "default_engine": "local",
+    "retrieval": {"top_k": 4},
+    "engines": {
+        "local":  {"enabled": True,  "ollama_url": os.environ.get("OLLAMA_URL", "http://192.168.1.193:11434"),
+                   "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")},
+        "claude": {"enabled": False, "api_key": "", "model": "claude-opus-4-8"},
+        "openai": {"enabled": False, "api_key": "", "model": "gpt-4o"},
+        "gemini": {"enabled": False, "api_key": "", "model": "gemini-2.0-flash"},
+    },
+    "sources": {"smb": {"enabled": False, "host": "192.168.1.5", "share": "", "path": "", "username": "", "password": ""}},
+}
+ENV_KEYS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GOOGLE_API_KEY"}
+LABELS   = {"local": "Lokal · Mac", "claude": "Claude (Anthropic)", "openai": "ChatGPT (OpenAI)", "gemini": "Google Gemini"}
+ORDER    = ["local", "claude", "openai", "gemini"]
+_lock = threading.Lock()
+STATE = {"indexing": False, "detail": ""}
+_state_lock = threading.Lock()
+def set_indexing(on, detail=""):
+    with _state_lock:
+        STATE["indexing"] = bool(on); STATE["detail"] = detail
+
+SYSTEM = ("Du bist ein praeziser Wissens-Assistent fuer Tech-IT Consulting. Beantworte die Frage "
+          "AUSSCHLIESSLICH anhand des bereitgestellten Kontexts auf Deutsch. Wenn die Antwort nicht "
+          "im Kontext steht, sage das ehrlich. Erfinde nichts.")
+
+def _clone(d): return json.loads(json.dumps(d))
+def deep_merge(base, ov):
+    out = _clone(base)
+    for k, v in ov.items():
+        out[k] = deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
+def load_raw():
+    cfg = _clone(DEFAULTS)
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH) as f: cfg = deep_merge(cfg, json.load(f))
+        except Exception: pass
+    return cfg
+def load_config():
+    cfg = load_raw()
+    for e, env in ENV_KEYS.items():
+        if not cfg["engines"][e].get("api_key") and os.environ.get(env):
+            cfg["engines"][e]["api_key"] = os.environ[env]
+    return cfg
+def save_config(cfg):
+    with _lock:
+        with open(CONFIG_PATH, "w") as f: json.dump(cfg, f, indent=2, ensure_ascii=False)
+def engine_key(cfg, e): return cfg["engines"][e].get("api_key") or os.environ.get(ENV_KEYS.get(e, ""), "")
+def engine_available(cfg, e):
+    en = cfg["engines"][e]
+    return False if not en.get("enabled") else (True if e == "local" else bool(engine_key(cfg, e)))
+
+def pick_model():
+    s = {m["model"] for m in TextEmbedding.list_supported_models()}
+    return PREFERRED if PREFERRED in s else FALLBACK
+MODEL = pick_model()
+EMB   = TextEmbedding(model_name=MODEL, cache_dir=CACHE)
+IS_E5 = "e5" in MODEL.lower()
+def emb_query(t):
+    x = f"query: {t}" if IS_E5 else t
+    return list(EMB.embed([x]))[0].tolist()
+def emb_passages(texts):
+    xs = [f"passage: {t}" for t in texts] if IS_E5 else list(texts)
+    return [v.tolist() for v in EMB.embed(xs)]
+DIM = len(emb_query("test"))
+qc = QdrantClient(url=QDRANT)
+def ensure_collection():
+    if not qc.collection_exists(COLL):
+        qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
+def retrieve(q, k):
+    return qc.query_points(COLL, query=emb_query(q), limit=k, with_payload=True).points
+
+def read_text_bytes(name, data):
+    ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
+    try:
+        if ext in (".md", ".txt"): return data.decode("utf-8", "ignore")
+        if ext == ".pdf":
+            from pypdf import PdfReader
+            return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
+        if ext == ".docx":
+            import docx
+            d = docx.Document(io.BytesIO(data)); parts = [p.text for p in d.paragraphs]
+            for t in d.tables:
+                for row in t.rows: parts.append(" | ".join(c.text for c in row.cells))
+            return "\n".join(parts)
+    except Exception as ex: print(f"[Warn] {name}: {ex}")
+    return ""
+
+def chunk(text, size=1000, overlap=150):
+    text = text.strip(); out, i = [], 0
+    while i < len(text):
+        piece = text[i:i+size].strip()
+        if piece: out.append(piece)
+        i += size - overlap
+    return out
+
+def index_file(rel, data):
+    ensure_collection()
+    qc.delete(COLL, points_selector=Filter(must=[FieldCondition(key="source", match=MatchValue(value=rel))]))
+    chs = chunk(read_text_bytes(rel, data))
+    if not chs: return 0
+    tenant = rel.split("/")[0] if "/" in rel else "qnap"
+    pts = [PointStruct(id=str(uuid.uuid4()), vector=v, payload={"text": ch, "source": rel, "tenant": tenant})
+           for ch, v in zip(chs, emb_passages(chs))]
+    for i in range(0, len(pts), 256): qc.upsert(COLL, points=pts[i:i+256])
+    return len(pts)
+
+def smb_connect(s):
+    import smbclient
+    smbclient.reset_connection_cache()
+    smbclient.register_session(s["host"].strip(), username=s["username"], password=s.get("password", ""))
+    host = s["host"].strip(); share = s["share"].strip().strip("\\/")
+    sub = (s.get("path") or "").strip().strip("\\/").replace("/", "\\")
+    root = f"\\\\{host}\\{share}"
+    base = root + ("\\" + sub if sub else "")
+    return smbclient, root, base, sub
+
+def ingest_smb():
+    cfg = load_config(); s = cfg["sources"]["smb"]
+    if not s.get("enabled"): raise ValueError("SMB-Quelle ist nicht aktiviert.")
+    if not s.get("share") or not s.get("username"): raise ValueError("Share-Name und Benutzername muessen gesetzt sein.")
+    smbclient, root, base, sub = smb_connect(s)
+    items = []
+    for dp, _d, files in smbclient.walk(base):
+        for fn in files:
+            if fn.lower().endswith(EXTS):
+                full = dp + "\\" + fn
+                rel = full[len(root):].strip("\\").replace("\\", "/")
+                with smbclient.open_file(full, mode="rb") as fd: items.append((rel, fd.read()))
+    if qc.collection_exists(COLL): qc.delete_collection(COLL)
+    qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
+    total, skipped = 0, 0
+    for rel, data in items:
+        n = index_file(rel, data)
+        total += n; skipped += 0 if n else 1
+    return {"files": len(items), "skipped": skipped, "chunks": total}
+
+def indexed_count():
+    try: return qc.count(COLL).count
+    except Exception: return 0
+
+def list_documents():
+    ensure_collection(); srcs = {}; off = None
+    try:
+        while True:
+            pts, off = qc.scroll(COLL, limit=256, offset=off, with_payload=["source"])
+            for p in pts:
+                src = p.payload.get("source", "?"); srcs[src] = srcs.get(src, 0) + 1
+            if off is None: break
+    except Exception: pass
+    return [{"source": k, "chunks": srcs[k]} for k in sorted(srcs)]
+
+def gen_local(cfg, q, ctx):
+    en = cfg["engines"]["local"]
+    body = json.dumps({"model": en["model"], "prompt": f"Kontext:\n{ctx}\n\nFrage: {q}\n\nAntwort:", "system": SYSTEM, "stream": False}).encode()
+    req = urllib.request.Request(en["ollama_url"] + "/api/generate", data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r: return json.load(r)["response"].strip()
+def gen_claude(cfg, q, ctx):
+    import anthropic
+    en = cfg["engines"]["claude"]; client = anthropic.Anthropic(api_key=engine_key(cfg, "claude"))
+    msg = client.messages.create(model=en["model"], max_tokens=1024, system=SYSTEM,
+            messages=[{"role": "user", "content": f"Kontext:\n{ctx}\n\nFrage: {q}"}])
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
+def gen_openai(cfg, q, ctx):
+    from openai import OpenAI
+    en = cfg["engines"]["openai"]; client = OpenAI(api_key=engine_key(cfg, "openai"))
+    r = client.chat.completions.create(model=en["model"], max_tokens=1024,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": f"Kontext:\n{ctx}\n\nFrage: {q}"}])
+    return (r.choices[0].message.content or "").strip()
+def gen_gemini(cfg, q, ctx):
+    from google import genai
+    en = cfg["engines"]["gemini"]; client = genai.Client(api_key=engine_key(cfg, "gemini"))
+    return (client.models.generate_content(model=en["model"], contents=f"{SYSTEM}\n\nKontext:\n{ctx}\n\nFrage: {q}").text or "").strip()
+GENERATORS = {"local": gen_local, "claude": gen_claude, "openai": gen_openai, "gemini": gen_gemini}
+
+app = FastAPI(title="Tech-IT Wissens-Chat")
+class AskReq(BaseModel):
+    question: str
+    engine: Optional[str] = None
+class ConfigIn(BaseModel):
+    default_engine: Optional[str] = None
+    retrieval: Optional[dict] = None
+    engines: Optional[dict] = None
+    sources: Optional[dict] = None
+
+@app.get("/api/engines")
+def engines():
+    cfg = load_config(); out = []
+    for e in ORDER:
+        en = cfg["engines"][e]
+        label = LABELS[e] + (f" ({en['model']})" if e == "local" else "")
+        out.append({"id": e, "label": label, "available": engine_available(cfg, e), "default": cfg["default_engine"] == e})
+    return out
+
+@app.post("/api/ask")
+def ask(r: AskReq):
+    cfg = load_config(); e = r.engine or cfg["default_engine"]
+    if e not in GENERATORS or not engine_available(cfg, e):
+        return JSONResponse({"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."}, status_code=400)
+    hits = retrieve(r.question, int(cfg["retrieval"].get("top_k", 4)))
+    context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
+    sources = sorted({h.payload["source"] for h in hits})
+    try: answer = GENERATORS[e](cfg, r.question, context)
+    except Exception as ex: return JSONResponse({"error": f"Fehler bei Engine '{LABELS.get(e, e)}': {ex}"}, status_code=500)
+    return {"answer": answer, "sources": sources, "engine": LABELS[e]}
+
+@app.get("/api/config")
+def get_config():
+    cfg = load_config()
+    out = {"default_engine": cfg["default_engine"], "retrieval": cfg["retrieval"], "engines": {}, "indexed_chunks": indexed_count()}
+    for e in ORDER:
+        en = cfg["engines"][e]; item = {"enabled": en.get("enabled", False), "model": en.get("model", ""), "label": LABELS[e]}
+        if e == "local": item["ollama_url"] = en.get("ollama_url", "")
+        else:
+            item["has_key"] = bool(engine_key(cfg, e))
+            item["key_from_env"] = bool(not en.get("api_key") and os.environ.get(ENV_KEYS.get(e, "")))
+        out["engines"][e] = item
+    s = cfg["sources"]["smb"]
+    out["sources"] = {"smb": {"enabled": s.get("enabled", False), "host": s.get("host", ""), "share": s.get("share", ""),
+                              "path": s.get("path", ""), "username": s.get("username", ""), "has_password": bool(s.get("password"))}}
+    return out
+
+@app.post("/api/config")
+def set_config(c: ConfigIn):
+    cfg = load_raw()
+    if c.default_engine: cfg["default_engine"] = c.default_engine
+    if c.retrieval: cfg["retrieval"].update(c.retrieval)
+    if c.engines:
+        for e, vals in c.engines.items():
+            if e not in cfg["engines"]: continue
+            tgt = cfg["engines"][e]
+            if "enabled" in vals: tgt["enabled"] = bool(vals["enabled"])
+            if vals.get("model"): tgt["model"] = vals["model"]
+            if e == "local" and vals.get("ollama_url"): tgt["ollama_url"] = vals["ollama_url"]
+            if vals.get("api_key"): tgt["api_key"] = vals["api_key"]
+    if c.sources and "smb" in c.sources:
+        smb = c.sources["smb"]; tgt = cfg["sources"]["smb"]
+        if "enabled" in smb: tgt["enabled"] = bool(smb["enabled"])
+        for f in ("host", "share", "path", "username"):
+            if f in smb: tgt[f] = smb[f]
+        if smb.get("password"): tgt["password"] = smb["password"]
+    save_config(cfg)
+    return {"ok": True}
+
+@app.get("/api/status")
+def api_status():
+    with _state_lock: st = dict(STATE)
+    st["indexed_chunks"] = indexed_count(); return st
+
+@app.post("/api/ingest")
+def api_ingest():
+    set_indexing(True, "QNAP wird komplett neu eingelesen")
+    try: return {"ok": True, **ingest_smb()}
+    except Exception as ex: return JSONResponse({"error": str(ex)}, status_code=400)
+    finally: set_indexing(False)
+
+@app.get("/api/documents")
+def api_documents():
+    docs = list_documents()
+    return {"documents": docs, "total_chunks": sum(d["chunks"] for d in docs)}
+
+@app.post("/api/upload")
+async def api_upload(files: List[UploadFile] = File(...)):
+    cfg = load_config(); s = cfg["sources"]["smb"]
+    if not s.get("share") or not s.get("username"):
+        return JSONResponse({"error": "SMB-Quelle ist nicht konfiguriert (Share/Benutzer fehlen)."}, status_code=400)
+    try: smbclient, root, base, sub = smb_connect(s)
+    except Exception as ex: return JSONResponse({"error": f"SMB-Verbindung fehlgeschlagen: {ex}"}, status_code=400)
+    results = []
+    for uf in files:
+        name = os.path.basename(uf.filename or "")
+        if not name.lower().endswith(EXTS):
+            results.append({"file": name, "error": "Dateityp nicht unterstuetzt"}); continue
+        data = await uf.read()
+        try:
+            with smbclient.open_file(base + "\\" + name, mode="wb") as fd: fd.write(data)
+        except Exception as ex:
+            results.append({"file": name, "error": f"Schreiben auf QNAP fehlgeschlagen: {ex}"}); continue
+        rel = (sub.replace("\\", "/") + "/" if sub else "") + name
+        try: results.append({"file": name, "chunks": index_file(rel, data)})
+        except Exception as ex: results.append({"file": name, "error": f"Indexierung fehlgeschlagen: {ex}"})
+    return {"ok": True, "results": results, "indexed_chunks": indexed_count()}
+
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
