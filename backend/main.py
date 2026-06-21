@@ -1,7 +1,8 @@
-import os, io, json, uuid, urllib.request, threading
+import os, io, json, uuid, urllib.request, threading, mimetypes
+from urllib.parse import quote
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastembed import TextEmbedding
@@ -88,6 +89,18 @@ def ensure_collection():
         qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
 def retrieve(q, k):
     return qc.query_points(COLL, query=emb_query(q), limit=k, with_payload=True).points
+
+SOURCE_MARGIN = float(os.environ.get("SOURCE_MARGIN", "0.05"))
+def rank_sources(hits):
+    """Quellen nach bestem Chunk-Score, nur die relevanten (nahe am Top-Score), min. 1."""
+    best = {}
+    for h in hits:
+        src = h.payload.get("source", "?")
+        best[src] = max(best.get(src, 0.0), float(h.score))
+    ranked = sorted(best.items(), key=lambda x: -x[1])
+    if not ranked: return []
+    top = ranked[0][1]
+    return [{"source": s, "score": round(sc, 3)} for s, sc in ranked if sc >= top - SOURCE_MARGIN]
 
 def read_text_bytes(name, data):
     ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
@@ -356,7 +369,7 @@ def ask_stream(r: AskReq):
         return StreamingResponse(err(), media_type="text/event-stream")
     hits = retrieve(r.question, int(cfg["retrieval"].get("top_k", 4)))
     context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
-    sources = sorted({h.payload["source"] for h in hits})
+    sources = rank_sources(hits)
     messages = build_messages(r.history, r.question, context)
     def gen():
         yield sse("meta", {"sources": sources, "engine": LABELS[e]})
@@ -424,6 +437,26 @@ def api_ingest(full: bool = False):
 def api_documents():
     docs = list_documents()
     return {"documents": docs, "total_chunks": sum(d["chunks"] for d in docs)}
+
+@app.get("/api/document")
+def api_document(source: str):
+    # Nur tatsaechlich indizierte Quellen erlauben -> kein Path-Traversal
+    known = {d["source"] for d in list_documents()}
+    if source not in known:
+        return JSONResponse({"error": "Unbekannte Quelle."}, status_code=404)
+    cfg = load_config(); s = cfg["sources"]["smb"]
+    try:
+        smbclient, root, base, sub = smb_connect(s)
+        full = root + "\\" + source.replace("/", "\\")
+        with smbclient.open_file(full, mode="rb") as fd: data = fd.read()
+    except Exception as ex:
+        return JSONResponse({"error": f"Datei nicht abrufbar: {ex}"}, status_code=502)
+    name = source.rsplit("/", 1)[-1]
+    ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    # PDF/Text inline im Browser, Office-Dateien laden herunter
+    disp = "inline" if ctype in ("application/pdf", "text/plain") else "attachment"
+    headers = {"Content-Disposition": f"{disp}; filename*=UTF-8''{quote(name)}"}
+    return Response(content=data, media_type=ctype, headers=headers)
 
 @app.post("/api/upload")
 async def api_upload(files: List[UploadFile] = File(...)):

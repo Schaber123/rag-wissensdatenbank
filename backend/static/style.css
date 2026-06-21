@@ -59,7 +59,8 @@ body{
 .newchat:hover{border-color:var(--primary);color:#fff}
 .meta{font-size:.72rem;color:var(--muted)}
 .sources{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.1rem}
-.src{font-size:.72rem;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:.2rem .5rem}
+.src{font-size:.72rem;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:.2rem .5rem;text-decoration:none;cursor:pointer;transition:.15s}
+a.src:hover{border-color:var(--primary);color:#fff}
 .typing .bubble{color:var(--muted)}
 .dot{display:inline-block;animation:blink 1.2s infinite}
 .dot:nth-child(2){animation-delay:.2s}.dot:nth-child(3){animation-delay:.4s}

@@ -73,6 +73,7 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
 | GET | `/api/status` | `{indexing, detail, indexed_chunks}` |
 | POST | `/api/ingest?full=<bool>` | SMB abgleichen — inkrementell (default) oder Voll-Neuaufbau |
 | GET | `/api/documents` | Indizierte Dokumente + Chunk-Anzahl |
+| GET | `/api/document?source=<rel>` | Datei vom QNAP abrufen/öffnen (PDF inline). Nur indizierte Quellen erlaubt (kein Path-Traversal) |
 | POST | `/api/upload` | Dateien hochladen → auf QNAP schreiben + indizieren |
 | GET | `/api/ollama/models?url=<url>` | Modelle eines Ollama-Servers auflisten (`/api/tags`) |
 
@@ -96,6 +97,13 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
   - **local** nutzt Ollama `/api/chat` (streamend, Multi-Turn-fähig).
 - **Multi-Turn:** Frontend schickt `history` (letzte 8 Nachrichten) mit; `build_messages()`
   baut daraus die Chat-Messages, Retrieval erfolgt auf die aktuelle Frage.
+
+### Quellen-Anzeige (relevanzgefiltert + anklickbar)
+- `rank_sources()` bildet je Quelle den besten Chunk-Score, sortiert absteigend und zeigt nur
+  Quellen **nahe am Top-Score** (Abstand ≤ `SOURCE_MARGIN`, Default 0.05; min. 1 Quelle).
+  Statt „alle abgerufenen Dokumente" erscheint so die tatsächlich relevante Quelle (bzw. wenige).
+- `meta`-Event liefert `sources` als `[{source, score}]`; das Frontend rendert sie als **Links**
+  auf `/api/document?source=…` (Dateiname sichtbar, Pfad + Relevanz % im Tooltip).
 
 ---
 
