@@ -57,7 +57,9 @@ function renderMarkdown(src){
 }
 
 // ===================== Tab-Verwaltung =====================
-const STORE_KEY = "rag_chat_tabs_v1";
+// Ablage PRO NUTZER (Benutzername im Key), damit niemand die Chats eines anderen
+// Nutzers sieht, wenn man sich im selben Browser ab- und wieder anmeldet.
+let STORE_KEY = "rag_chat_tabs_v1";
 let tabs = [];        // [{id, title, messages:[{role,text,sources,engine}]}]
 let activeId = null;
 let busy = false;     // true waehrend eines laufenden Streams
@@ -284,8 +286,14 @@ document.addEventListener("click", e => {
 
 if (newBtn) newBtn.addEventListener("click", newTab);
 
-// Start
-loadTabs(); renderTabs(); renderChat();
+// Start: erst wenn der angemeldete Nutzer bekannt ist (Key pro Nutzer setzen)
+function startTabs(me){
+  STORE_KEY = "rag_chat_tabs_v1::" + (me && me.username ? me.username : "anon");
+  try{ localStorage.removeItem("rag_chat_tabs_v1"); }catch(e){}  // alten globalen Key aufraeumen
+  loadTabs(); renderTabs(); renderChat();
+}
+if (window.__me && window.__me.username) startTabs(window.__me);
+else document.addEventListener("me-ready", e => startTabs(e.detail), { once: true });
 
 // --- Status-Banner: zeigt laufende Indexierung im Dashboard ---
 (function(){
