@@ -4,6 +4,9 @@ backend/config.json
 backend/users.json
 backend/users.json.tmp
 
+# Nutzer-Chats (serverseitig, pro Nutzer)
+backend/chats/
+
 # Python
 __pycache__/
 *.pyc

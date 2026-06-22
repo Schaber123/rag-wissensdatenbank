@@ -57,9 +57,8 @@ function renderMarkdown(src){
 }
 
 // ===================== Tab-Verwaltung =====================
-// Ablage PRO NUTZER (Benutzername im Key), damit niemand die Chats eines anderen
-// Nutzers sieht, wenn man sich im selben Browser ab- und wieder anmeldet.
-let STORE_KEY = "rag_chat_tabs_v1";
+// Chats liegen SERVERSEITIG pro Nutzer (/api/chats) – geraeteuebergreifend,
+// nichts mehr im Browser. Jeder sieht nur seine eigenen Chats.
 let tabs = [];        // [{id, title, messages:[{role,text,sources,engine}]}]
 let activeId = null;
 let busy = false;     // true waehrend eines laufenden Streams
@@ -67,19 +66,35 @@ let busy = false;     // true waehrend eines laufenden Streams
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function activeTab(){ return tabs.find(t => t.id === activeId); }
 
-function loadTabs(){
+async function loadChats(){
   try{
-    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
-    if (raw && Array.isArray(raw.tabs) && raw.tabs.length){
-      tabs = raw.tabs; activeId = raw.active && tabs.some(t => t.id === raw.active) ? raw.active : tabs[0].id;
-      return;
+    const r = await fetch("/api/chats", { credentials: "same-origin" });
+    if (r.status === 401){ location.href = "login.html"; return; }
+    if (r.ok){
+      const d = await r.json();
+      if (d.chats && d.chats.length){
+        tabs = d.chats
+          .sort((a, b) => (a.created || 0) - (b.created || 0))
+          .map(c => ({ id: c.id, title: c.title || "Neuer Chat", messages: c.messages || [] }));
+        activeId = tabs[tabs.length - 1].id;
+        return;
+      }
     }
   }catch(e){}
   tabs = [{ id: uid(), title: "Neuer Chat", messages: [] }];
   activeId = tabs[0].id;
 }
-function saveTabs(){
-  try{ localStorage.setItem(STORE_KEY, JSON.stringify({ tabs, active: activeId })); }catch(e){}
+async function saveChat(t){
+  if (!t || !t.messages.length) return;   // leere Tabs nicht persistieren
+  try{
+    await fetch("/api/chats/" + encodeURIComponent(t.id), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "same-origin",
+      body: JSON.stringify({ title: tabTitle(t), messages: t.messages })
+    });
+  }catch(e){}
+}
+async function deleteChat(id){
+  try{ await fetch("/api/chats/" + encodeURIComponent(id), { method: "DELETE", credentials: "same-origin" }); }catch(e){}
 }
 function tabTitle(t){
   const firstUser = t.messages.find(m => m.role === "user");
@@ -169,12 +184,12 @@ function addSources(m, sources){
 
 function switchTab(id){
   if (busy || id === activeId) return;
-  activeId = id; saveTabs(); renderTabs(); renderChat();
+  activeId = id; renderTabs(); renderChat();
 }
 function newTab(){
   if (busy) return;
   const t = { id: uid(), title: "Neuer Chat", messages: [] };
-  tabs.push(t); activeId = t.id; saveTabs(); renderTabs(); renderChat();
+  tabs.push(t); activeId = t.id; renderTabs(); renderChat();
   input.focus();
 }
 function closeTab(id){
@@ -182,9 +197,10 @@ function closeTab(id){
   const idx = tabs.findIndex(t => t.id === id);
   if (idx === -1) return;
   tabs.splice(idx, 1);
+  deleteChat(id);
   if (!tabs.length){ tabs.push({ id: uid(), title: "Neuer Chat", messages: [] }); }
   if (activeId === id){ activeId = tabs[Math.max(0, idx - 1)].id; }
-  saveTabs(); renderTabs(); renderChat();
+  renderTabs(); renderChat();
 }
 
 // ===================== Fragen / Streaming =====================
@@ -218,7 +234,7 @@ async function ask(question){
       addSources(botMsg, botData.sources);
     }
     busy = false; sendBtn.disabled = false;
-    saveTabs(); renderTabs();
+    saveChat(t); renderTabs();
     chat.scrollTop = chat.scrollHeight;
   };
 
@@ -232,7 +248,7 @@ async function ask(question){
       const data = await res.json().catch(() => ({}));
       botMsg.classList.remove("typing");
       bubble.textContent = "⚠️ " + (data.error || "Fehler");
-      botData.text = ""; busy = false; sendBtn.disabled = false; renderTabs(); return;
+      botData.text = ""; busy = false; sendBtn.disabled = false; saveChat(t); renderTabs(); return;
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -268,7 +284,7 @@ async function ask(question){
   }catch(err){
     botMsg.classList.remove("typing");
     bubble.textContent = "⚠️ Verbindungsfehler: " + err.message;
-    botData.text = ""; busy = false; sendBtn.disabled = false; renderTabs();
+    botData.text = ""; busy = false; sendBtn.disabled = false; saveChat(t); renderTabs();
   }
 }
 
@@ -286,14 +302,14 @@ document.addEventListener("click", e => {
 
 if (newBtn) newBtn.addEventListener("click", newTab);
 
-// Start: erst wenn der angemeldete Nutzer bekannt ist (Key pro Nutzer setzen)
-function startTabs(me){
-  STORE_KEY = "rag_chat_tabs_v1::" + (me && me.username ? me.username : "anon");
-  try{ localStorage.removeItem("rag_chat_tabs_v1"); }catch(e){}  // alten globalen Key aufraeumen
-  loadTabs(); renderTabs(); renderChat();
+// Start: Chats serverseitig laden (erst wenn der Nutzer feststeht)
+async function startTabs(){
+  // alte browser-lokale Ablage einmalig aufraeumen (jetzt serverseitig)
+  try{ Object.keys(localStorage).filter(k => k.startsWith("rag_chat_tabs_v1")).forEach(k => localStorage.removeItem(k)); }catch(e){}
+  await loadChats(); renderTabs(); renderChat();
 }
-if (window.__me && window.__me.username) startTabs(window.__me);
-else document.addEventListener("me-ready", e => startTabs(e.detail), { once: true });
+if (window.__me && window.__me.username) startTabs();
+else document.addEventListener("me-ready", () => startTabs(), { once: true });
 
 // --- Status-Banner: zeigt laufende Indexierung im Dashboard ---
 (function(){

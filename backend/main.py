@@ -1,4 +1,4 @@
-import os, io, json, uuid, urllib.request, threading, mimetypes, math, re
+import os, io, json, uuid, urllib.request, threading, mimetypes, math, re, time
 from urllib.parse import quote
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Depends, Request
@@ -601,6 +601,9 @@ class GroupIn(BaseModel):
     id: Optional[str] = None
     label: Optional[str] = None
     folders: Optional[List[str]] = None
+class ChatIn(BaseModel):
+    title: Optional[str] = None
+    messages: Optional[List[dict]] = None
 
 @app.get("/api/engines")
 def engines(user: dict = Depends(auth.require_user)):
@@ -903,6 +906,57 @@ def twofa_disable(r: PwIn, user: dict = Depends(auth.require_user)):
     if not auth.verify_pw(r.password, u.get("pw_hash", "")):
         return JSONResponse({"error": "Passwort falsch."}, status_code=401)
     u["totp_secret"] = None; u["totp_enabled"] = False; auth.save_store(store)
+    return {"ok": True}
+
+# ===================== Chats (serverseitig, pro Nutzer) =====================
+CHATS_DIR = os.environ.get("CHATS_DIR", "/srv/chats")
+MAX_CHATS_PER_USER = int(os.environ.get("MAX_CHATS_PER_USER", "100"))
+_chats_lock = threading.Lock()
+
+def _chats_path(username):
+    safe = re.sub(r"[^a-z0-9_-]", "_", (username or "").lower()) or "_"
+    return os.path.join(CHATS_DIR, safe + ".json")
+
+def load_chats(username):
+    p = _chats_path(username)
+    if os.path.exists(p):
+        try:
+            with open(p) as f: return json.load(f)
+        except Exception: pass
+    return {"chats": []}
+
+def save_chats(username, data):
+    with _chats_lock:
+        os.makedirs(CHATS_DIR, exist_ok=True)
+        p = _chats_path(username); tmp = p + ".tmp"
+        with open(tmp, "w") as f: json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, p)
+
+@app.get("/api/chats")
+def api_chats(user: dict = Depends(auth.require_user)):
+    return load_chats(user["username"])
+
+@app.put("/api/chats/{cid}")
+def api_chat_put(cid: str, c: ChatIn, user: dict = Depends(auth.require_user)):
+    data = load_chats(user["username"]); chats = data.setdefault("chats", [])
+    now = int(time.time())
+    ch = next((x for x in chats if x.get("id") == cid), None)
+    if ch is None:
+        ch = {"id": cid, "created": now}; chats.append(ch)
+    if c.title is not None: ch["title"] = c.title
+    if c.messages is not None: ch["messages"] = c.messages
+    ch["updated"] = now
+    if len(chats) > MAX_CHATS_PER_USER:  # aelteste verwerfen
+        chats.sort(key=lambda x: x.get("updated", 0))
+        data["chats"] = chats[-MAX_CHATS_PER_USER:]
+    save_chats(user["username"], data)
+    return {"ok": True}
+
+@app.delete("/api/chats/{cid}")
+def api_chat_del(cid: str, user: dict = Depends(auth.require_user)):
+    data = load_chats(user["username"])
+    data["chats"] = [x for x in data.get("chats", []) if x.get("id") != cid]
+    save_chats(user["username"], data)
     return {"ok": True}
 
 # ===================== Admin: Nutzer & Gruppen =====================
