@@ -1,19 +1,25 @@
-import os, io, json, uuid, urllib.request, threading, mimetypes
+import os, io, json, uuid, urllib.request, threading, mimetypes, math
 from urllib.parse import quote
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from fastembed import TextEmbedding
+from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (Distance, VectorParams, PointStruct, Filter, FieldCondition,
+                                  MatchValue, SparseVector, SparseVectorParams, Modifier, Prefetch,
+                                  FusionQuery, Fusion)
 
 QDRANT    = os.environ.get("QDRANT_URL", "http://qdrant:6333")
-COLL      = os.environ.get("COLLECTION", "rag_test")
+COLL      = os.environ.get("COLLECTION", "rag_hybrid")
 CACHE     = os.environ.get("FASTEMBED_CACHE", "/models")
 PREFERRED = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
 FALLBACK  = "intfloat/multilingual-e5-large"
+SPARSE_MODEL   = os.environ.get("SPARSE_MODEL", "Qdrant/bm25")
+DEFAULT_RERANK = os.environ.get("RERANK_MODEL", "jinaai/jina-reranker-v2-base-multilingual")
+RERANK_FALLBACKS = ["jinaai/jina-reranker-v2-base-multilingual", "BAAI/bge-reranker-v2-m3",
+                    "Xenova/ms-marco-MiniLM-L-12-v2", "Xenova/ms-marco-MiniLM-L-6-v2"]
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/srv/config.json")
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif")
 EXTS = (".md", ".txt", ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx") + IMG_EXTS
@@ -21,7 +27,8 @@ OCR_LANG = os.environ.get("OCR_LANG", "deu+eng")
 
 DEFAULTS = {
     "default_engine": "local",
-    "retrieval": {"top_k": 4},
+    "retrieval": {"top_k": 4, "hybrid": True, "rerank": True, "candidates": 20,
+                  "rerank_model": DEFAULT_RERANK},
     "engines": {
         "local":  {"enabled": True,  "ollama_url": os.environ.get("OLLAMA_URL", "http://192.168.1.193:11434"),
                    "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")},
@@ -78,31 +85,103 @@ def pick_model():
 MODEL = pick_model()
 EMB   = TextEmbedding(model_name=MODEL, cache_dir=CACHE)
 IS_E5 = "e5" in MODEL.lower()
+EMBED_BATCH = int(os.environ.get("EMBED_BATCH", "16"))
+# parallel=1: kein Multiprocessing -> nur EIN Modell im RAM (sonst lädt fastembed je Worker
+# eine eigene ~2 GB-Kopie -> OOM auf der 8-GB-VM). batch_size begrenzt den Spitzenverbrauch.
 def emb_query(t):
     x = f"query: {t}" if IS_E5 else t
-    return list(EMB.embed([x]))[0].tolist()
+    return list(EMB.embed([x], parallel=1))[0].tolist()
 def emb_passages(texts):
     xs = [f"passage: {t}" for t in texts] if IS_E5 else list(texts)
-    return [v.tolist() for v in EMB.embed(xs)]
+    return [v.tolist() for v in EMB.embed(xs, batch_size=EMBED_BATCH, parallel=1)]
 DIM = len(emb_query("test"))
-qc = QdrantClient(url=QDRANT)
-def ensure_collection():
-    if not qc.collection_exists(COLL):
-        qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
-def retrieve(q, k):
-    return qc.query_points(COLL, query=emb_query(q), limit=k, with_payload=True).points
 
-SOURCE_MARGIN = float(os.environ.get("SOURCE_MARGIN", "0.05"))
+# ---- Sparse-/BM25-Embeddings (exakte Stichwort-Treffer fuer die Hybrid-Suche) ----
+try:
+    SEMB = SparseTextEmbedding(model_name=SPARSE_MODEL, cache_dir=CACHE, language="german")
+except TypeError:
+    SEMB = SparseTextEmbedding(model_name=SPARSE_MODEL, cache_dir=CACHE)
+def _to_sparse(e):
+    idx = e.indices.tolist() if hasattr(e.indices, "tolist") else list(e.indices)
+    val = e.values.tolist()  if hasattr(e.values, "tolist")  else list(e.values)
+    return SparseVector(indices=idx, values=val)
+def emb_sparse_query(t):    return _to_sparse(list(SEMB.query_embed(t))[0])
+def emb_sparse_passages(ts): return [_to_sparse(e) for e in SEMB.embed(list(ts))]
+
+# ---- Reranker (Cross-Encoder, lazy geladen, mehrsprachig) ----
+_reranker = None; _reranker_req = None
+def get_reranker(name):
+    global _reranker, _reranker_req
+    if _reranker is not None and _reranker_req == name: return _reranker
+    from fastembed.rerank.cross_encoder import TextCrossEncoder
+    supported = {m["model"] for m in TextCrossEncoder.list_supported_models()}
+    chosen = name if name in supported else next((m for m in RERANK_FALLBACKS if m in supported), None)
+    if not chosen: raise RuntimeError("kein unterstuetztes Reranker-Modell verfuegbar")
+    _reranker = TextCrossEncoder(model_name=chosen, cache_dir=CACHE); _reranker_req = name
+    if chosen != name: print(f"[Rerank] '{name}' nicht verfuegbar -> '{chosen}'")
+    return _reranker
+
+qc = QdrantClient(url=QDRANT)
+def _create_coll():
+    qc.create_collection(COLL,
+        vectors_config={"dense": VectorParams(size=DIM, distance=Distance.COSINE)},
+        sparse_vectors_config={"bm25": SparseVectorParams(modifier=Modifier.IDF)})
+def ensure_collection():
+    if not qc.collection_exists(COLL): _create_coll()
+
+def _candidates(cfg, q, n):
+    """Kandidaten holen: hybrid (dense + BM25, RRF-Fusion) oder dense-only als Fallback."""
+    if cfg.get("retrieval", {}).get("hybrid", True):
+        try:
+            return qc.query_points(COLL, with_payload=True, limit=n,
+                prefetch=[Prefetch(query=emb_query(q),        using="dense", limit=n),
+                          Prefetch(query=emb_sparse_query(q), using="bm25",  limit=n)],
+                query=FusionQuery(fusion=Fusion.RRF)).points
+        except Exception as ex:
+            print(f"[Hybrid-Warn] Fallback auf Dense-Suche: {ex}")
+    return qc.query_points(COLL, query=emb_query(q), using="dense", limit=n, with_payload=True).points
+
+def rerank_hits(cfg, q, hits):
+    """Cross-Encoder ueber die Kandidaten; Score -> Sigmoid (0..1), absteigend sortiert."""
+    rr = get_reranker(cfg.get("retrieval", {}).get("rerank_model", DEFAULT_RERANK))
+    scores = list(rr.rerank(q, [h.payload.get("text", "") for h in hits]))
+    out = []
+    for i in sorted(range(len(hits)), key=lambda j: scores[j], reverse=True):
+        h = hits[i]
+        try: h.score = 1.0 / (1.0 + math.exp(-float(scores[i])))
+        except Exception: pass
+        out.append(h)
+    return out
+
+def retrieve(cfg, q):
+    rcfg = cfg.get("retrieval", {})
+    k = int(rcfg.get("top_k", 4))
+    do_rerank = bool(rcfg.get("rerank", True))
+    pool = max(int(rcfg.get("candidates", 20)), k) if do_rerank else k
+    hits = _candidates(cfg, q, pool)
+    if hits and do_rerank:
+        try: return rerank_hits(cfg, q, hits)[:k]
+        except Exception as ex: print(f"[Rerank-Warn] uebersprungen: {ex}")
+    return hits[:k]
+
+SOURCE_REL_MARGIN = float(os.environ.get("SOURCE_REL_MARGIN", "0.15"))
 def rank_sources(hits):
-    """Quellen nach bestem Chunk-Score, nur die relevanten (nahe am Top-Score), min. 1."""
-    best = {}
+    """Quellen nach bestem Chunk-Score, nur die relevanten (nahe am Top-Score), min. 1.
+       Relativer Abstand -> skalenunabhaengig (passt fuer Rerank-, RRF- und Cosine-Scores)."""
+    best = {}  # source -> (score, page) des besten Chunks
     for h in hits:
-        src = h.payload.get("source", "?")
-        best[src] = max(best.get(src, 0.0), float(h.score))
-    ranked = sorted(best.items(), key=lambda x: -x[1])
+        src = h.payload.get("source", "?"); sc = float(h.score)
+        if src not in best or sc > best[src][0]: best[src] = (sc, h.payload.get("page"))
+    ranked = sorted(best.items(), key=lambda x: -x[1][0])
     if not ranked: return []
-    top = ranked[0][1]
-    return [{"source": s, "score": round(sc, 3)} for s, sc in ranked if sc >= top - SOURCE_MARGIN]
+    thr = ranked[0][1][0] * (1.0 - SOURCE_REL_MARGIN)
+    out = []
+    for s, (sc, pg) in ranked:
+        if sc < thr: continue
+        item = {"source": s, "score": round(sc, 3)}
+        if pg: item["page"] = pg
+        out.append(item)
+    return out
 
 def ocr_image_bytes(data):
     import pytesseract
@@ -124,6 +203,37 @@ def ocr_pdf_bytes(data, dpi=200):
     finally:
         doc.close()
     return "\n".join(parts)
+
+def ocr_pdf_pages(data, dpi=200):
+    """Gescanntes PDF: jede Seite rendern + OCR, mit Seitenzahl."""
+    import fitz  # PyMuPDF
+    import pytesseract
+    from PIL import Image
+    out = []
+    doc = fitz.open(stream=data, filetype="pdf")
+    try:
+        for i, page in enumerate(doc, 1):
+            pix = page.get_pixmap(dpi=dpi)
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            out.append((i, pytesseract.image_to_string(img, lang=OCR_LANG)))
+    finally:
+        doc.close()
+    return out
+
+def read_pages(name, data):
+    """[(page, text), ...] – PDFs mit Seitenzahl (OCR-Fallback pro Seite), sonst [(None, Gesamttext)]."""
+    ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
+    if ext == ".pdf":
+        try:
+            from pypdf import PdfReader
+            pages = [(i, (p.extract_text() or "")) for i, p in enumerate(PdfReader(io.BytesIO(data)).pages, 1)]
+            if sum(len(t.strip()) for _, t in pages) < 50:  # kaum Text -> vermutlich gescannt -> OCR pro Seite
+                try: pages = ocr_pdf_pages(data)
+                except Exception as ex: print(f"[OCR-Warn] {name}: {ex}")
+            return pages
+        except Exception as ex:
+            print(f"[Warn] {name}: {ex}"); return []
+    return [(None, read_text_bytes(name, data))]
 
 def read_text_bytes(name, data):
     ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
@@ -202,11 +312,13 @@ def delete_source(rel):
 def index_file(rel, data, sig=None):
     ensure_collection()
     delete_source(rel)
-    chs = chunk(read_text_bytes(rel, data))
-    if not chs: return 0
+    items = [(ch, pg) for pg, text in read_pages(rel, data) for ch in chunk(text)]
+    if not items: return 0
+    texts = [t for t, _ in items]
     tenant = rel.split("/")[0] if "/" in rel else "qnap"
-    pts = [PointStruct(id=str(uuid.uuid4()), vector=v, payload={"text": ch, "source": rel, "tenant": tenant, "sig": sig})
-           for ch, v in zip(chs, emb_passages(chs))]
+    pts = [PointStruct(id=str(uuid.uuid4()), vector={"dense": dv, "bm25": sv},
+                       payload={"text": t, "source": rel, "page": pg, "tenant": tenant, "sig": sig})
+           for (t, pg), dv, sv in zip(items, emb_passages(texts), emb_sparse_passages(texts))]
     for i in range(0, len(pts), 256): qc.upsert(COLL, points=pts[i:i+256])
     return len(pts)
 
@@ -238,6 +350,16 @@ def file_sig(stat):
     """Signatur aus Groesse + Aenderungszeit – erkennt geaenderte Dateien ohne Download."""
     return f"{getattr(stat, 'st_size', 0)}-{int(getattr(stat, 'st_mtime', 0))}"
 
+def smb_read_retry(s, full_p):
+    """Datei lesen; bei abgelaufener SMB-Session (z. B. weil das Embedding zwischen zwei
+    Downloads mehrere Minuten dauert) einmal neu verbinden und erneut versuchen."""
+    import smbclient
+    try:
+        with smbclient.open_file(full_p, mode="rb", share_access="r") as fd: return fd.read()
+    except Exception:
+        smb_connect(s)  # Session erneuern
+        with smbclient.open_file(full_p, mode="rb", share_access="r") as fd: return fd.read()
+
 def ingest_smb(full=False):
     cfg = load_config(); s = cfg["sources"]["smb"]
     if not s.get("enabled"): raise ValueError("SMB-Quelle ist nicht aktiviert.")
@@ -258,7 +380,7 @@ def ingest_smb(full=False):
     # 2) Voll-Reindex: Collection neu aufbauen. Sonst: bestehende Signaturen vergleichen
     if full:
         if qc.collection_exists(COLL): qc.delete_collection(COLL)
-        qc.create_collection(COLL, vectors_config=VectorParams(size=DIM, distance=Distance.COSINE))
+        _create_coll()
         existing = {}
     else:
         existing = indexed_sigs()
@@ -275,7 +397,7 @@ def ingest_smb(full=False):
         set_indexing(True, f"{i}/{len(to_index)}: {rel}")
         full_p = root + "\\" + rel.replace("/", "\\")
         try:
-            with smbclient.open_file(full_p, mode="rb") as fd: data = fd.read()
+            data = smb_read_retry(s, full_p)
         except Exception as ex:
             print(f"[Warn] {rel}: {ex}"); skipped += 1; continue
         was_known = rel in existing
@@ -424,7 +546,7 @@ def ask(r: AskReq):
     cfg = load_config(); e = r.engine or cfg["default_engine"]
     if e not in GENERATORS or not engine_available(cfg, e):
         return JSONResponse({"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."}, status_code=400)
-    hits = retrieve(r.question, int(cfg["retrieval"].get("top_k", 4)))
+    hits = retrieve(cfg, r.question)
     context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
     sources = sorted({h.payload["source"] for h in hits})
     try: answer = GENERATORS[e](cfg, r.question, context)
@@ -438,7 +560,7 @@ def ask_stream(r: AskReq):
         def err():
             yield sse("error", {"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."})
         return StreamingResponse(err(), media_type="text/event-stream")
-    hits = retrieve(r.question, int(cfg["retrieval"].get("top_k", 4)))
+    hits = retrieve(cfg, r.question)
     context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
     sources = rank_sources(hits)
     messages = build_messages(r.history, r.question, context)
@@ -534,7 +656,7 @@ def api_document(source: str):
     try:
         smbclient, root, base, sub = smb_connect(s)
         full = root + "\\" + source.replace("/", "\\")
-        with smbclient.open_file(full, mode="rb") as fd: data = fd.read()
+        with smbclient.open_file(full, mode="rb", share_access="r") as fd: data = fd.read()
     except Exception as ex:
         return JSONResponse({"error": f"Datei nicht abrufbar: {ex}"}, status_code=502)
     name = source.rsplit("/", 1)[-1]
@@ -568,5 +690,17 @@ async def api_upload(files: List[UploadFile] = File(...)):
         try: results.append({"file": name, "chunks": index_file(rel, data, sig)})
         except Exception as ex: results.append({"file": name, "error": f"Indexierung fehlgeschlagen: {ex}"})
     return {"ok": True, "results": results, "indexed_chunks": indexed_count()}
+
+def _warmup_reranker():
+    try:
+        rc = load_config().get("retrieval", {})
+        if rc.get("rerank", True):
+            get_reranker(rc.get("rerank_model", DEFAULT_RERANK)); print("[Warmup] Reranker bereit")
+    except Exception as ex: print(f"[Warmup-Warn] {ex}")
+# Warmup standardmäßig AUS: spart auf der 8-GB-VM ~1 GB RAM während des Indexierens
+# (e5-large braucht den Platz). Der Reranker wird sonst beim ersten Chat lazy geladen
+# (einmalig ~10 s Verzögerung). Mit RERANK_WARMUP=1 wieder aktivierbar.
+if os.environ.get("RERANK_WARMUP", "0") == "1":
+    threading.Thread(target=_warmup_reranker, daemon=True).start()
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

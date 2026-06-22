@@ -14,20 +14,43 @@ wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 **Funktioniert / fertig:**
 - Multi-Engine-Chat (lokal Mac/Ollama, OpenAI, Claude, Gemini) mit **SSE-Streaming**, **Multi-Turn-Verlauf**, **Markdown**.
 - **Inkrementelles Indexieren** (Signatur Größe+mtime) + Voll-Neuaufbau, **asynchron** (kein „Load failed" mehr).
-- **Schnelles Embedding** (MiniLM, 384 Dim) — Indexieren in Sekunden statt Minuten.
-- **Quellen** relevanzgefiltert, nach Score sortiert, **anklickbar** (öffnet Datei vom QNAP, PDF inline).
+- **Starkes Embedding** (`intfloat/multilingual-e5-large`, 1024 Dim) — findet auch natürlichsprachliche Fragen
+  zuverlässig (z. B. „Wie startet man die Cforce 820?" → echte Startanleitung S.69; mit MiniLM lag die auf Rang 144).
+  Preis: langsamerer Voll-Neuaufbau (~15–20 Min, single-core) und ~0,5–1 s mehr pro Frage. Einmal-/Inkrement-Aufwand.
+- **Hybrid-Suche + Reranking** *(neu)*: dense (MiniLM) **+** sparse BM25, per **RRF-Fusion** zusammengeführt,
+  danach **Cross-Encoder-Reranking** (mehrsprachig). Findet Eigennamen/Nummern/Fachbegriffe deutlich besser.
+  Per Settings ab-/zuschaltbar (`hybrid`, `rerank`, `candidates`, `rerank_model`), mit Dense-Fallback.
+- **Quellen** relevanzgefiltert (jetzt **relativer** Score-Abstand, skalenunabhängig), nach Score sortiert, **anklickbar**.
+- **Seitengenaue Quellen** *(neu)*: PDFs werden seitenweise indiziert, jeder Chunk trägt seine `page`. Die Quelle zeigt
+  „· S. N" an und der Link öffnet das PDF direkt auf der Seite (`#page=N`). Gescannte PDFs: OCR pro Seite.
 - **Dateitypen:** PDF, Word, Excel, PowerPoint, CSV, Text, Bilder — inkl. **OCR** (Tesseract deu+eng) für Scans.
 - **Lokale Engine via Netbird** (Mac `100.94.178.115`), **Ollama-Autostart** (LaunchAgent auf dem Mac).
 - API-Keys werden **im Webinterface** verwaltet (config.json); `.env` als leerer Fallback.
-- Settings: „Ollama-Modelle abrufen", Hilfetext zu `top_k`.
+- Settings: „Ollama-Modelle abrufen", Hilfetext zu `top_k`, Karte „Suche & Relevanz".
+
+> ⚠️ **Speicher auf der 8-GB-VM (wichtig!):** e5-large ist RAM-hungrig. Damit der Voll-Neuaufbau **nicht
+> OOM-gekillt** wird, gilt: Embedding läuft mit `parallel=1` + `EMBED_BATCH=16` (nur EIN Modell im RAM statt
+> einer ~2-GB-Kopie pro Kern), und der **Reranker-Warmup ist beim Start AUS** (`RERANK_WARMUP=1` aktiviert ihn
+> wieder; er lädt sonst beim ersten Chat lazy, ~10 s). Baseline-RAM dann ~3,6 GB, im Betrieb ~4–6 GB. Bei
+> Modellwechsel auf etwas noch Größeres unbedingt RAM/Swap im Blick behalten (`free -m`, `dmesg | grep -i oom`).
+> **SMB-Robustheit:** Weil das Embedding pro Datei Minuten dauern kann, lief die SMB-Session ab → Folge-Downloads
+> scheiterten. Behoben durch Reconnect-Retry (`smb_read_retry`).
+>
+> ⚠️ **Deploy der Hybrid-Suche:** neues Collection-Schema (benannte Vektoren `dense` + sparse `bm25`) →
+> **Voll-Neuaufbau nötig** und neue Collection `rag_hybrid` (alte `rag_test` bleibt als Rollback liegen).
+> `requirements.txt` wurde gepinnt (`qdrant-client>=1.10`, `fastembed>=0.4.2`) → **`docker compose build backend`** nötig.
+> Der Reranker (Standard `jinaai/jina-reranker-v2-base-multilingual`) wird beim ersten Einsatz automatisch
+> heruntergeladen (~mehrere 100 MB ins `models`-Volume) und beim Start vorgewärmt. Auf der CPU-VM kostet das Reranking
+> je Frage ~1–3 s; falls zu langsam → in den Einstellungen abschalten oder `candidates` senken.
 
 **Offene Punkte / mögliche nächste Schritte:**
 - [ ] **OpenAI-Key rotieren:** neuen Key in der OpenAI-Konsole erzeugen, alten widerrufen, neuen im Webinterface eintragen
       (aktuell hat OpenAI **keinen** Key → Default-Engine-Frage schlägt fehl, bis Key gesetzt; lokale Engine läuft).
 - [ ] **SMB-Passwort** liegt noch im Klartext in `config.json` — optional analog zu den API-Keys in `.env`.
 - [ ] **Bilder vom Share:** werden beim Abgleich per OCR mitindiziert — bei Bedarf auf „nur Upload" beschränken.
-- [ ] **Retrieval-Qualität:** falls MiniLM mal zu ungenau → auf `paraphrase-multilingual-mpnet-base-v2` (768 Dim) wechseln
-      (Voll-Neuaufbau nötig). `top_k` aktuell 4.
+- [ ] **Retrieval-Qualität:** dank Hybrid + Reranking deutlich verbessert. Falls das Dense-Embedding selbst noch
+      limitiert → optional auf `paraphrase-multilingual-mpnet-base-v2` (768 Dim) wechseln (Voll-Neuaufbau nötig).
+      `top_k` aktuell 4, `candidates` 20.
 - [ ] **Kein Auth** auf der Web-App (für externen Betrieb ggf. nachrüsten).
 
 **Wie wir weitermachen:** Lokale Arbeitskopie + Git-Historie unter `rag-app/`. Deploy = `scp` (Reload) bzw.
@@ -78,7 +101,18 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
 ```
 
 - **Docker-Compose:** `/opt/rag/docker-compose.yml` — Services `qdrant`, `backend`, optional `app` (Profil `tools`).
-- **Collection:** `rag_test` (Cosine).
+- **Collection:** `rag_hybrid` (benannte Vektoren). Vorher `rag_test` (reines Dense) — bleibt nach dem Wechsel
+  unangetastet als Rollback.
+  - Dense-Vektor `dense` (Cosine, 384 Dim) **+** Sparse-Vektor `bm25` (`SparseVectorParams(modifier=IDF)`).
+  - **Hybrid-Suche:** Qdrant `query_points` mit zwei `Prefetch` (dense + bm25) und `FusionQuery(RRF)` →
+    Kandidaten-Pool (`candidates`, Default 20). Danach **Cross-Encoder-Reranking** auf die besten `top_k`.
+    Reranker-Score wird per Sigmoid auf 0–1 abgebildet → `rank_sources`/„Relevanz %" bleiben aussagekräftig.
+  - Steuerung in `config.json` unter `retrieval`: `hybrid`, `rerank`, `candidates`, `rerank_model`, `top_k`.
+    Fällt bei Fehlern automatisch auf Dense-Suche bzw. „ohne Rerank" zurück.
+  - **Sparse/BM25-Modell:** `Qdrant/bm25` (fastembed, tokenizer-basiert, kein neuronales Modell → CPU-günstig),
+    IDF wird serverseitig von Qdrant gewichtet. Sprache `german` (Stopwords), via `SPARSE_MODEL` änderbar.
+  - **Reranker:** Default `jinaai/jina-reranker-v2-base-multilingual` (mehrsprachig). Lazy + Warmup beim Start,
+    Fallback-Liste falls nicht unterstützt (`RERANK_FALLBACKS`). Modell/An-Aus über Settings bzw. `RERANK_MODEL`.
 - **Embedding-Modell:** `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (384 Dim, mehrsprachig),
   gesetzt über `EMBED_MODEL` in `docker-compose.yml`.
   - Gewählt wegen Tempo: auf der 4-Core-VM ~**0,01 s/Chunk** statt ~3 s/Chunk bei e5-large (Faktor ~300).
@@ -86,7 +120,8 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
     Fallback `intfloat/multilingual-e5-large`. Das war die Ursache für „hängende"/sehr langsame Indexierungen.
   - **Modellwechsel = anderes Vektorformat** → danach **Voll-Neuaufbau** nötig (`/api/ingest?full=true`).
   - E5-Modelle bräuchten `query:`/`passage:`-Präfixe (`IS_E5` im Code); bei MiniLM aus (korrekt).
-- **Chunking:** 1000 Zeichen, 150 Überlappung.
+- **Chunking:** 1000 Zeichen, 150 Überlappung. PDFs werden **seitenweise** gechunkt (`read_pages`), damit jeder
+  Chunk eine `page`-Angabe bekommt (Quelle springt per `#page=N` an die Stelle). Andere Formate: `page=None`.
 - **Unterstützte Dateitypen** (`EXTS` / `read_text_bytes`):
   PDF, Word `.docx`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`, CSV, Text `.txt`/`.md`,
   Bilder `.png/.jpg/.jpeg/.tif/.tiff/.bmp/.gif`.
@@ -196,12 +231,12 @@ lsof -nP -iTCP:11434 -sTCP:LISTEN                                               
 ## 6. Konfiguration (`/opt/rag/backend/config.json`)
 
 Wird über die Settings-UI bzw. `POST /api/config` gepflegt. Struktur (ohne Werte):
-`default_engine`, `retrieval.top_k`, `engines.{local,claude,openai,gemini}`
-(`enabled/model/api_key`, local zusätzlich `ollama_url`), `sources.smb`
-(`enabled/host/share/path/username/password`).
+`default_engine`, `retrieval.{top_k,hybrid,rerank,candidates,rerank_model}`,
+`engines.{local,claude,openai,gemini}` (`enabled/model/api_key`, local zusätzlich `ollama_url`),
+`sources.smb` (`enabled/host/share/path/username/password`).
 
-Stand 2026-06-21: `default_engine = openai`, `top_k = 4`, lokale Engine aktiv auf Netbird-IP,
-SMB aktiv (QNAP 192.168.1.5 / Wissensdatenbank / Dokumente).
+Stand 2026-06-21: `default_engine = openai`, `top_k = 4`, `hybrid = true`, `rerank = true`,
+`candidates = 20`, lokale Engine aktiv auf Netbird-IP, SMB aktiv (QNAP 192.168.1.5 / Wissensdatenbank / Dokumente).
 
 ---
 
@@ -243,6 +278,15 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
 
 ## 9. Historie
 
+- **2026-06-22:** Embedding auf **`intfloat/multilingual-e5-large`** umgestellt (NL-Fragen wurden mit MiniLM nicht
+  gefunden). Auf der 8-GB-VM nötige Anpassungen: `parallel=1` + `EMBED_BATCH=16`, Reranker-Warmup standardmäßig AUS
+  (`RERANK_WARMUP`), SMB-Download mit Reconnect-Retry (`smb_read_retry`) gegen Session-Ablauf bei langsamem Embedding.
+  `top_k=8`, `candidates=30`. Collection neu (1024 Dim), 11 Dateien / 342 Chunks.
+- **2026-06-21 (3):** **Seitengenaue Quellen** – PDFs seitenweise indiziert (`read_pages`/`ocr_pdf_pages`),
+  `page` im Payload, Quelle zeigt „· S. N" und Link öffnet `#page=N`.
+- **2026-06-21 (2):** **Hybrid-Suche (dense + BM25, RRF) + Cross-Encoder-Reranking**; neue Collection `rag_hybrid`
+  mit benannten Vektoren; `rank_sources` auf relativen Score umgestellt; Settings-Karte „Suche & Relevanz";
+  `requirements.txt` gepinnt. → einmaliger Voll-Neuaufbau + `docker compose build backend` nötig.
 - **2026-06-21:** Inkrementelles Indexieren, SSE-Streaming, Multi-Turn-Verlauf, Markdown-Chat,
   „Ollama-Modelle abrufen"; lokale Engine über Netbird angebunden; Ollama-Autostart per LaunchAgent.
 - Davor: funktionsfähige Basis (Chat, Settings, Upload, SMB-Ingest, 4 Engines).

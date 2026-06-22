@@ -38,7 +38,12 @@ function render(){
     const o = document.createElement("option"); o.value = id; o.textContent = cfg.engines[id].label;
     if (cfg.default_engine === id) o.selected = true; defSel.appendChild(o);
   });
-  topK.value = (cfg.retrieval && cfg.retrieval.top_k) || 4;
+  const r = cfg.retrieval || {};
+  topK.value = r.top_k || 4;
+  $("r_hybrid").checked = r.hybrid !== false;
+  $("r_rerank").checked = r.rerank !== false;
+  $("r_candidates").value = r.candidates || 20;
+  $("r_rerank_model").value = r.rerank_model || "";
   const s = cfg.sources.smb;
   $("smb_enabled").checked = !!s.enabled; $("smb_host").value = s.host||""; $("smb_share").value = s.share||"";
   $("smb_path").value = s.path||""; $("smb_user").value = s.username||"";
@@ -87,7 +92,11 @@ enginesBox.addEventListener("click", async e => {
 });
 
 function buildPayload(){
-  const p = { default_engine: defSel.value, retrieval: { top_k: parseInt(topK.value)||4 }, engines:{}, sources:{ smb:{} } };
+  const p = { default_engine: defSel.value,
+    retrieval: { top_k: parseInt(topK.value)||4, hybrid: $("r_hybrid").checked,
+                 rerank: $("r_rerank").checked, candidates: parseInt($("r_candidates").value)||20 },
+    engines:{}, sources:{ smb:{} } };
+  if ($("r_rerank_model").value.trim()) p.retrieval.rerank_model = $("r_rerank_model").value.trim();
   document.querySelectorAll("[data-engine]").forEach(el => {
     const e = el.dataset.engine, f = el.dataset.field; p.engines[e] = p.engines[e]||{};
     if (el.type === "checkbox") p.engines[e][f] = el.checked; else if (el.value !== "") p.engines[e][f] = el.value;

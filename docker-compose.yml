@@ -21,7 +21,7 @@ services:
       - .env
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - EMBED_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - EMBED_MODEL=intfloat/multilingual-e5-large
       - FASTEMBED_CACHE=/models
       - OLLAMA_URL=http://192.168.1.193:11434
       - OLLAMA_MODEL=qwen2.5:7b
@@ -39,7 +39,7 @@ services:
       - qdrant
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - EMBED_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      - EMBED_MODEL=intfloat/multilingual-e5-large
       - FASTEMBED_CACHE=/models
       - OLLAMA_URL=http://192.168.1.193:11434
       - OLLAMA_MODEL=qwen2.5:7b

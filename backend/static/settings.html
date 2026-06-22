@@ -90,6 +90,23 @@
         </ul>
         <p class="note">Faustregel: wenige/kurze Dokumente &rarr; 3&ndash;4. Viele oder lange Dokumente &rarr; 6&ndash;8.</p>
       </section>
+
+      <section class="card">
+        <h2>Suche &amp; Relevanz</h2>
+        <label class="switch"><input type="checkbox" id="r_hybrid"><span>Hybrid-Suche (Bedeutung + Stichwort/BM25)</span></label>
+        <p class="note">Kombiniert die semantische Suche mit exakter Stichwortsuche &ndash; findet Eigennamen,
+          Artikel-/Kundennummern und Fachbegriffe deutlich zuverl&auml;ssiger.</p>
+        <label class="switch"><input type="checkbox" id="r_rerank"><span>Reranking (Cross-Encoder)</span></label>
+        <p class="note">Bewertet die gefundenen Ausschnitte noch einmal genauer und sortiert die besten nach oben.
+          Treffsicherer, aber etwas langsamer (l&auml;uft auf der CPU des Servers).</p>
+        <div class="row"><label for="r_candidates">Kandidaten vor dem Reranking</label>
+          <input id="r_candidates" type="number" min="4" max="60" step="1"></div>
+        <p class="note">Wie viele Ausschnitte zun&auml;chst gesucht werden, bevor der Reranker daraus die besten
+          (siehe Trefferanzahl oben) ausw&auml;hlt. H&ouml;her = gr&uuml;ndlicher, aber langsamer. Empfehlung: 16&ndash;24.</p>
+        <div class="row"><label for="r_rerank_model">Reranker-Modell</label>
+          <input id="r_rerank_model" type="text" placeholder="jinaai/jina-reranker-v2-base-multilingual"></div>
+        <p class="note">Mehrsprachiges Modell empfohlen (Standard). Wird beim ersten Einsatz automatisch geladen.</p>
+      </section>
     </section>
 
     <div class="actions">

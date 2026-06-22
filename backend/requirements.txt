@@ -1,8 +1,8 @@
 fastapi
 uvicorn[standard]
 python-multipart
-qdrant-client
-fastembed
+qdrant-client>=1.10
+fastembed>=0.4.2
 anthropic
 openai
 google-genai
