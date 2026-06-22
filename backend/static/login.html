@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anmelden &middot; Tech-IT Wissens-Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="login-wrap">
+    <form id="loginform" class="login-card">
+      <div class="login-brand">
+        <img src="logo.png" alt="Tech-IT Consulting" class="logo">
+        <span class="brand-text">Wissens-Chat</span>
+      </div>
+
+      <div id="step-pw">
+        <div class="row">
+          <label for="username">Benutzername</label>
+          <input id="username" type="text" autocomplete="username" autofocus required>
+        </div>
+        <div class="row">
+          <label for="password">Passwort</label>
+          <input id="password" type="password" autocomplete="current-password" required>
+        </div>
+      </div>
+
+      <div id="step-2fa" class="hidden">
+        <p class="note">Bitte den 6-stelligen Code aus deiner Authenticator-App eingeben.</p>
+        <div class="row">
+          <label for="code">2FA-Code</label>
+          <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6">
+        </div>
+      </div>
+
+      <div id="loginerr" class="login-err"></div>
+      <button id="loginbtn" type="submit">Anmelden</button>
+    </form>
+    <footer class="footer">&copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat</footer>
+  </main>
+  <script src="login.js"></script>
+</body>
+</html>

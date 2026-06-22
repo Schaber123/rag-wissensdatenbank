@@ -150,6 +150,29 @@ button.secondary:disabled{opacity:.5;cursor:not-allowed}
   border:1px solid var(--line);border-radius:8px;padding:.5rem .7rem;font-size:.85rem}
 .docname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* --- generisch --- */
+.hidden{display:none}
+
+/* --- Topbar: Nutzer-Box / Logout --- */
+.userbox{display:flex;align-items:center;gap:.7rem}
+.user-chip{font-size:.82rem;color:var(--muted)}
+
+/* --- Login-Seite --- */
+.login-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:1.5rem}
+.login-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:1.6rem 1.5rem;width:100%;max-width:360px;display:flex;flex-direction:column;gap:.2rem}
+.login-brand{display:flex;align-items:center;gap:.7rem;justify-content:center;margin-bottom:1rem}
+.login-brand .logo{height:40px}
+.login-card button{font-family:inherit;font-weight:600;cursor:pointer;border:none;border-radius:10px;padding:.7rem 1.2rem;background:var(--primary);color:#fff;font-size:.95rem;margin-top:.6rem;transition:.15s}
+.login-card button:hover{background:var(--primary-2)}
+.login-card button:disabled{opacity:.5;cursor:not-allowed}
+.login-err{color:#f87171;font-size:.85rem;min-height:1.1rem;margin-top:.3rem}
+
+/* --- Checkbox-Gitter (Gruppen/Ordner im Admin) --- */
+.checkbox-grid{display:flex;flex-wrap:wrap;gap:.4rem .9rem;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.6rem .7rem}
+.checkbox-grid .switch{cursor:pointer}
+.admin-row{background:var(--panel-2)}
+#upload-folder-row input{width:100%}
+
 /* --- Indexierung-laeuft-Banner --- */
 .idx-banner{background:#3a2d0b;color:#fbbf24;border-bottom:1px solid #6b5410;
   text-align:center;font-size:.85rem;font-weight:500;padding:.5rem;letter-spacing:.2px;

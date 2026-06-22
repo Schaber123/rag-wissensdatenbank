@@ -14,13 +14,16 @@
       <img src="logo.png" alt="Tech-IT Consulting" class="logo">
       <span class="brand-text">Einstellungen</span>
     </div>
-    <a class="back-link" href="index.html">&larr; Zum Chat</a>
+    <div class="topbar-right">
+      <a class="back-link" href="index.html">&larr; Zum Chat</a>
+    </div>
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="llm">LLM-Zug&auml;nge</button>
+    <button class="tab active" data-tab="llm" data-admin="1">LLM-Zug&auml;nge</button>
     <button class="tab" data-tab="docs">Datenquelle &amp; Dokumente</button>
-    <button class="tab" data-tab="general">Allgemein</button>
+    <button class="tab" data-tab="general" data-admin="1">Allgemein</button>
+    <button class="tab" data-tab="konto">Mein Konto</button>
   </nav>
 
   <main class="settings">
@@ -62,6 +65,11 @@
         <p class="note">Dateien hierher ziehen &ndash; sie werden auf den QNAP geschrieben und sofort indiziert.<br>
           Unterst&uuml;tzt: PDF, Word (.docx), Excel (.xlsx/.xls), PowerPoint (.pptx), CSV, Text (.txt/.md) sowie Bilder
           (.png/.jpg/.tiff). Gescannte PDFs und Bilder werden per <b>OCR</b> (Texterkennung, Deutsch/Englisch) ausgelesen.</p>
+        <div class="row" id="upload-folder-row">
+          <label for="upload_folder">Zielordner</label>
+          <input id="upload_folder" list="folder-options" placeholder="z.B. Technik oder Technik/Maschinen">
+          <datalist id="folder-options"></datalist>
+        </div>
         <div id="dropzone" class="dropzone">
           <span>Dateien hierher ziehen oder <b>klicken zum Ausw&auml;hlen</b></span>
           <input type="file" id="fileinput" multiple
@@ -109,7 +117,44 @@
       </section>
     </section>
 
-    <div class="actions">
+    <!-- TAB: Mein Konto -->
+    <section class="tabpane hidden" id="tab-konto">
+      <section class="card">
+        <h2>Passwort &auml;ndern</h2>
+        <div class="row"><label for="pw_old">Aktuelles Passwort</label><input id="pw_old" type="password" autocomplete="current-password"></div>
+        <div class="row"><label for="pw_new">Neues Passwort (mind. 8 Zeichen)</label><input id="pw_new" type="password" autocomplete="new-password"></div>
+        <div class="row"><label for="pw_new2">Neues Passwort wiederholen</label><input id="pw_new2" type="password" autocomplete="new-password"></div>
+        <div class="actions"><button id="pw_save" type="button">Passwort speichern</button><span id="pw_status" class="status"></span></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Zwei-Faktor-Authentifizierung (2FA)</h2>
+          <span id="twofa_state" class="muted"></span>
+        </div>
+        <p class="note">Zus&auml;tzlicher Schutz per Authenticator-App (z.B. Google Authenticator, Microsoft Authenticator, Aegis).</p>
+
+        <div id="twofa_off">
+          <button id="twofa_setup" type="button" class="secondary">2FA einrichten</button>
+          <div id="twofa_setup_box" class="hidden">
+            <p class="note">1. QR-Code in der Authenticator-App scannen:</p>
+            <img id="twofa_qr" alt="QR-Code" style="max-width:200px;background:#fff;border-radius:8px;padding:8px;display:block">
+            <p class="note">Alternativ Schl&uuml;ssel manuell eingeben: <code id="twofa_secret"></code></p>
+            <div class="row"><label for="twofa_code">2. Code aus der App zur Best&auml;tigung</label>
+              <input id="twofa_code" type="text" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+            <div class="actions"><button id="twofa_enable" type="button">Aktivieren</button><span id="twofa_msg" class="status"></span></div>
+          </div>
+        </div>
+
+        <div id="twofa_on" class="hidden">
+          <p class="note"><span class="ok">&#10003; 2FA ist aktiv.</span></p>
+          <div class="row"><label for="twofa_pw">Zum Deaktivieren Passwort eingeben</label><input id="twofa_pw" type="password" autocomplete="current-password"></div>
+          <div class="actions"><button id="twofa_disable" type="button" class="secondary">2FA deaktivieren</button><span id="twofa_msg2" class="status"></span></div>
+        </div>
+      </section>
+    </section>
+
+    <div class="actions" id="config-actions">
       <button id="save" type="button">Einstellungen speichern</button>
       <span id="status" class="status"></span>
     </div>
@@ -118,6 +163,7 @@
   <footer class="footer">
     &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
   </footer>
+  <script src="guard.js"></script>
   <script src="settings.js"></script>
 </body>
 </html>

@@ -1,6 +1,8 @@
 # Secrets – niemals einchecken
 .env
 backend/config.json
+backend/users.json
+backend/users.json.tmp
 
 # Python
 __pycache__/

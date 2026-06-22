@@ -15,3 +15,6 @@ pymupdf
 pytesseract
 Pillow
 smbprotocol
+bcrypt
+pyotp
+qrcode

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tech-IT &middot; Verwaltung</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="logo.png" alt="Tech-IT Consulting" class="logo">
+      <span class="brand-text">Verwaltung</span>
+    </div>
+    <div class="topbar-right">
+      <a class="back-link" href="settings.html">Einstellungen</a>
+      <a class="back-link" href="index.html">&larr; Zum Chat</a>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="users">Nutzer</button>
+    <button class="tab" data-tab="groups">Gruppen</button>
+  </nav>
+
+  <main class="settings">
+    <!-- TAB: Nutzer -->
+    <section class="tabpane" id="tab-users">
+      <section class="card">
+        <h2>Neuen Nutzer anlegen</h2>
+        <div class="grid2">
+          <div class="row"><label>Benutzername</label><input id="nu_name" type="text" autocomplete="off"></div>
+          <div class="row"><label>Anzeigename</label><input id="nu_label" type="text" autocomplete="off"></div>
+          <div class="row"><label>Passwort</label><input id="nu_pw" type="password" autocomplete="new-password"></div>
+          <div class="row"><label class="switch"><input id="nu_admin" type="checkbox"><span>Administrator</span></label></div>
+        </div>
+        <div class="row"><label>Gruppen</label><div id="nu_groups" class="checkbox-grid"></div></div>
+        <div class="actions"><button id="nu_create" type="button">Nutzer anlegen</button><span id="nu_status" class="status"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>Nutzer <span id="users-count" class="muted"></span></h2>
+        <div id="userlist" class="doclist"></div>
+      </section>
+    </section>
+
+    <!-- TAB: Gruppen -->
+    <section class="tabpane hidden" id="tab-groups">
+      <section class="card">
+        <h2>Neue Gruppe anlegen</h2>
+        <div class="grid2">
+          <div class="row"><label>Name</label><input id="ng_label" type="text" placeholder="z.B. Vertrieb" autocomplete="off"></div>
+        </div>
+        <div class="row"><label>Erlaubte Ordner</label><div id="ng_folders" class="checkbox-grid"></div></div>
+        <div class="row"><label>Weiterer Ordner (manuell, Enter zum Hinzuf&uuml;gen)</label>
+          <input id="ng_folder_manual" type="text" placeholder="z.B. Technik/Maschinen"></div>
+        <div class="actions"><button id="ng_create" type="button">Gruppe anlegen</button><span id="ng_status" class="status"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>Gruppen <span id="groups-count" class="muted"></span></h2>
+        <div id="grouplist" class="doclist"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    &copy; <span id="year"></span> Tech-IT Consulting &middot; Verwaltung
+  </footer>
+  <script src="guard.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

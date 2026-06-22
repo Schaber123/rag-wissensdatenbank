@@ -138,7 +138,10 @@ dz.addEventListener("drop", e => { e.preventDefault(); dz.classList.remove("drag
 
 async function uploadFiles(fileList){
   const us = $("upload-status");
+  const folder = ($("upload_folder").value || "").trim();
+  if (!folder && !(window.__meAdmin)){ us.textContent = "⚠️ Bitte zuerst einen Zielordner wählen."; return; }
   const fd = new FormData(); [...fileList].forEach(f => fd.append("files", f));
+  if (folder) fd.append("folder", folder);
   us.textContent = `Lade ${fileList.length} Datei(en) hoch & indiziere…`;
   try{
     const res = await fetch("/api/upload", {method:"POST", body: fd});
@@ -222,4 +225,88 @@ async function pollStatus(){
 }
 setInterval(pollStatus, 3000); pollStatus();
 
-loadConfig(); loadDocuments();
+// --- Mein Konto: Passwort ändern ---
+$("pw_save").addEventListener("click", async () => {
+  const st = $("pw_status");
+  const oldp = $("pw_old").value, np = $("pw_new").value, np2 = $("pw_new2").value;
+  if (np !== np2){ st.textContent = "⚠️ Neue Passwörter stimmen nicht überein."; return; }
+  st.textContent = "Speichere…";
+  try{
+    const res = await fetch("/api/account/password", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({old_password: oldp, new_password: np})});
+    const d = await res.json().catch(()=>({}));
+    if (!res.ok){ st.textContent = "⚠️ " + (d.error||"Fehler"); return; }
+    st.textContent = "✓ Passwort geändert"; $("pw_old").value=$("pw_new").value=$("pw_new2").value="";
+  }catch(e){ st.textContent = "⚠️ " + e.message; }
+  setTimeout(()=>st.textContent="", 4000);
+});
+
+// --- Mein Konto: 2FA ---
+function render2FA(enabled){
+  $("twofa_state").textContent = enabled ? "aktiv" : "nicht aktiv";
+  $("twofa_on").classList.toggle("hidden", !enabled);
+  $("twofa_off").classList.toggle("hidden", enabled);
+  $("twofa_setup_box").classList.add("hidden");
+}
+$("twofa_setup").addEventListener("click", async () => {
+  const msg = $("twofa_msg"); msg.textContent = "Erzeuge Schlüssel…";
+  try{
+    const d = await fetch("/api/2fa/setup", {method:"POST"}).then(r=>r.json());
+    $("twofa_qr").src = d.qr; $("twofa_secret").textContent = d.secret;
+    $("twofa_setup_box").classList.remove("hidden"); msg.textContent = "";
+  }catch(e){ msg.textContent = "⚠️ " + e.message; }
+});
+$("twofa_enable").addEventListener("click", async () => {
+  const msg = $("twofa_msg");
+  try{
+    const res = await fetch("/api/2fa/enable", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({code: $("twofa_code").value.trim()})});
+    const d = await res.json().catch(()=>({}));
+    if (!res.ok){ msg.textContent = "⚠️ " + (d.error||"Fehler"); return; }
+    msg.textContent = "✓ aktiviert"; render2FA(true);
+  }catch(e){ msg.textContent = "⚠️ " + e.message; }
+});
+$("twofa_disable").addEventListener("click", async () => {
+  const msg = $("twofa_msg2");
+  try{
+    const res = await fetch("/api/2fa/disable", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({password: $("twofa_pw").value})});
+    const d = await res.json().catch(()=>({}));
+    if (!res.ok){ msg.textContent = "⚠️ " + (d.error||"Fehler"); return; }
+    msg.textContent = "✓ deaktiviert"; $("twofa_pw").value=""; render2FA(false);
+  }catch(e){ msg.textContent = "⚠️ " + e.message; }
+});
+
+async function populateFolders(me){
+  const dl = $("folder-options"); if (!dl) return;
+  let folders = [];
+  try{
+    if (me.admin){ const d = await fetch("/api/admin/folders").then(r=>r.json()); folders = d.folders||[]; }
+    else folders = me.folders||[];
+  }catch(e){ folders = me.folders||[]; }
+  dl.innerHTML = ""; folders.forEach(f => { const o=document.createElement("option"); o.value=f; dl.appendChild(o); });
+}
+
+// --- Init: Rechte des angemeldeten Nutzers anwenden ---
+async function init(){
+  let me;
+  try{ const r = await fetch("/api/me"); if (!r.ok){ location.href="login.html"; return; } me = await r.json(); }
+  catch(e){ location.href="login.html"; return; }
+  window.__meAdmin = !!me.admin;
+  render2FA(!!me.totp_enabled);
+  populateFolders(me);
+  loadDocuments();
+  if (me.admin){
+    loadConfig();
+  } else {
+    // Admin-Bereiche ausblenden, Standard-Tab auf "Datenquelle & Dokumente"
+    document.querySelectorAll(".tab[data-admin]").forEach(t => t.style.display = "none");
+    const sc = $("source-card"); if (sc) sc.style.display = "none";
+    const ca = $("config-actions"); if (ca) ca.style.display = "none";
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tabpane").forEach(p => p.classList.add("hidden"));
+    const dt = document.querySelector('.tab[data-tab="docs"]'); if (dt) dt.classList.add("active");
+    $("tab-docs").classList.remove("hidden");
+  }
+}
+init();

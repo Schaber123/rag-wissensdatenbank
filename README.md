@@ -9,9 +9,14 @@ wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 
 ---
 
-## 0. Stand & nächste Schritte (zuletzt: 2026-06-21)
+## 0. Stand & nächste Schritte (zuletzt: 2026-06-22)
 
 **Funktioniert / fertig:**
+- **Authentifizierung + Nutzer/Gruppen + ordnerbasierte Datenrechte** *(neu, 2026-06-22)* — siehe Abschnitt 10.
+  Login (User/Passwort, **bcrypt**), optional **TOTP-2FA**; Admin verwaltet Nutzer & Gruppen unter `admin.html`.
+  Gruppen geben **Ordner-Präfixe** frei; jeder Nutzer durchsucht/öffnet nur seine Ordner (ACL über
+  Qdrant-Payload `path_prefixes`). Admin sieht alles. Upload für alle (nur in erlaubte Ordner), Engine-/SMB-/
+  Such-Einstellungen + Voll-Reindex **admin-only**.
 - Multi-Engine-Chat (lokal Mac/Ollama, OpenAI, Claude, Gemini) mit **SSE-Streaming**, **Multi-Turn-Verlauf**, **Markdown**.
 - **Inkrementelles Indexieren** (Signatur Größe+mtime) + Voll-Neuaufbau, **asynchron** (kein „Load failed" mehr).
 - **Starkes Embedding** (`intfloat/multilingual-e5-large`, 1024 Dim) — findet auch natürlichsprachliche Fragen
@@ -51,7 +56,9 @@ wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 - [ ] **Retrieval-Qualität:** dank Hybrid + Reranking deutlich verbessert. Falls das Dense-Embedding selbst noch
       limitiert → optional auf `paraphrase-multilingual-mpnet-base-v2` (768 Dim) wechseln (Voll-Neuaufbau nötig).
       `top_k` aktuell 4, `candidates` 20.
-- [ ] **Kein Auth** auf der Web-App (für externen Betrieb ggf. nachrüsten).
+- [x] ~~Kein Auth auf der Web-App~~ — **erledigt** (Login + Gruppen/ACL, Abschnitt 10).
+- [ ] **Kein TLS:** Passwörter laufen über HTTP (im Netbird/WireGuard-VPN verschlüsselt, im LAN Klartext).
+      Später Reverse-Proxy mit TLS davor, dann `COOKIE_SECURE=1` in der `.env`.
 
 **Wie wir weitermachen:** Lokale Arbeitskopie + Git-Historie unter `rag-app/`. Deploy = `scp` (Reload) bzw.
 `docker compose build backend && up -d` bei Dockerfile/requirements-Änderungen. Details unten.
@@ -268,7 +275,8 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
   - Key ändern/rotieren: Wert in `/opt/rag/.env` setzen, dann `docker restart rag-backend`.
   - **Offen:** Der ursprüngliche OpenAI-Key war im Klartext exponiert → in der OpenAI-Konsole **neuen Key erzeugen + alten widerrufen**, neuen Wert in `.env` eintragen.
 - **SMB-Passwort** steht weiterhin im Klartext in `config.json` (gemountetes Volume) — könnte analog in `.env` wandern.
-- **Kein Auth** auf der Web-App — jeder im erreichbaren Netz kann sie nutzen. Für externen Betrieb ggf. Zugriffsschutz vorsehen.
+- **Auth vorhanden** (seit 2026-06-22, Abschnitt 10): Login + Gruppen-ACL. **Offen bleibt TLS** — Passwörter laufen
+  bis dahin über HTTP (im VPN verschlüsselt, im LAN Klartext). `users.json` (bcrypt-Hashes + TOTP-Secrets) ist gitignored.
 - **Ollama an 0.0.0.0** ist im LAN **und** Mesh erreichbar. Bei Bedarf gezielt auf die Netbird-IP binden.
 
 > **Deploy-Tipp:** Nach `scp` der `main.py` greift `--reload` meist automatisch. Hängt ein Request nach
@@ -278,6 +286,11 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
 
 ## 9. Historie
 
+- **2026-06-22 (2):** **Authentifizierung + Nutzer/Gruppen + ordnerbasierte ACL** (Abschnitt 10). Neue
+  `backend/auth.py`, Endpoints `/api/login`, `/api/me`, `/api/2fa/*`, `/api/admin/*`; `Depends`-Gating; ACL-Filter
+  in der Suche via Payload-Feld `path_prefixes`; UIs `login.html`/`admin.html` + „Mein Konto" in den Settings.
+  `requirements.txt` +`bcrypt`/`pyotp`/`qrcode` → `docker compose build backend`; einmaliger **Voll-Reindex** für
+  `path_prefixes`.
 - **2026-06-22:** Embedding auf **`intfloat/multilingual-e5-large`** umgestellt (NL-Fragen wurden mit MiniLM nicht
   gefunden). Auf der 8-GB-VM nötige Anpassungen: `parallel=1` + `EMBED_BATCH=16`, Reranker-Warmup standardmäßig AUS
   (`RERANK_WARMUP`), SMB-Download mit Reconnect-Retry (`smb_read_retry`) gegen Session-Ablauf bei langsamem Embedding.
@@ -290,3 +303,40 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
 - **2026-06-21:** Inkrementelles Indexieren, SSE-Streaming, Multi-Turn-Verlauf, Markdown-Chat,
   „Ollama-Modelle abrufen"; lokale Engine über Netbird angebunden; Ollama-Autostart per LaunchAgent.
 - Davor: funktionsfähige Basis (Chat, Settings, Upload, SMB-Ingest, 4 Engines).
+
+---
+
+## 10. Authentifizierung & Rechte
+
+**Anmeldung:** `login.html` (öffentlich). User + Passwort (bcrypt), optional **TOTP-2FA** (zweiter Schritt).
+Session als zufälliges Token im **HttpOnly-Cookie** `rag_session` (serverseitig im RAM gehalten → Neustart
+loggt aus). Geschützte Seiten binden `guard.js` ein (holt `/api/me`, leitet sonst auf Login um). Die echte
+Absicherung liegt **server-seitig** an den `/api/*`-Endpoints (FastAPI-`Depends`), nicht im Frontend.
+
+**Rollen & Rechte:**
+- **Admin:** sieht alle Dokumente, verwaltet Nutzer & Gruppen (`admin.html`), ändert Engine-/SMB-/Such-Einstellungen,
+  startet Voll-Reindex.
+- **Normale Nutzer:** chatten + öffnen Quellen **nur in ihren freigegebenen Ordnern**, dürfen **hochladen**
+  (nur in erlaubte Ordner), eigenes Passwort/2FA verwalten („Mein Konto" in den Settings).
+
+**Ordner-ACL (Datenrechte):** Jeder Chunk trägt im Qdrant-Payload `path_prefixes` = alle Vorgänger-Verzeichnisse
+seines `source` (z. B. `Technik/Maschinen/x.pdf` → `["Technik","Technik/Maschinen"]`). Eine **Gruppe** gibt
+Ordner-Präfixe frei; die erlaubten Präfixe eines Nutzers = Vereinigung seiner Gruppen. Die Suche filtert per
+`MatchAny` auf `path_prefixes`; Admin = kein Filter. Damit greift die Zugriffskontrolle direkt im Retrieval
+**und** beim Datei-Download (`/api/document`) und Upload.
+
+**Erst-Admin (Bootstrap):** beim ersten Start aus `ADMIN_USER`/`ADMIN_PASSWORD` in der `.env`. Fehlt das Passwort,
+wird eines generiert und **einmalig ins Log** geschrieben (`docker logs rag-backend`). Danach in „Mein Konto" ändern.
+
+**Speicher:** `backend/users.json` (gitignored, atomar geschrieben) — Nutzer mit bcrypt-Hash + TOTP-Secret, Gruppen
+mit Ordnerliste.
+
+```bash
+# Ordner anlegen + Gruppe/Nutzer pflegen → in der UI unter admin.html
+# Neuer Voll-Reindex nötig, wenn path_prefixes (ACL-Feld) für Altdaten fehlt:
+curl -s -b cj.txt -X POST "http://localhost:8000/api/ingest?full=true"
+```
+
+**Wichtig:** Nach dem Umbau auf department-spezifische Ordner auf dem QNAP (z. B. `Geschaeftsfuehrung/`,
+`Vertrieb/`, `Technik/`, `Versand/`) einmal **abgleichen/neu indizieren**, damit die Ordner in der
+Gruppen-Zuweisung (`/api/admin/folders`) auftauchen.

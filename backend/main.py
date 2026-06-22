@@ -1,15 +1,16 @@
-import os, io, json, uuid, urllib.request, threading, mimetypes, math
+import os, io, json, uuid, urllib.request, threading, mimetypes, math, re
 from urllib.parse import quote
 from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastembed import TextEmbedding, SparseTextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (Distance, VectorParams, PointStruct, Filter, FieldCondition,
-                                  MatchValue, SparseVector, SparseVectorParams, Modifier, Prefetch,
-                                  FusionQuery, Fusion)
+                                  MatchValue, MatchAny, SparseVector, SparseVectorParams, Modifier,
+                                  Prefetch, FusionQuery, Fusion)
+import auth
 
 QDRANT    = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 COLL      = os.environ.get("COLLECTION", "rag_hybrid")
@@ -126,20 +127,46 @@ def _create_coll():
     qc.create_collection(COLL,
         vectors_config={"dense": VectorParams(size=DIM, distance=Distance.COSINE)},
         sparse_vectors_config={"bm25": SparseVectorParams(modifier=Modifier.IDF)})
+    # Keyword-Index fuer den ACL-Filter (schnelles MatchAny auf den Ordner-Praefixen)
+    try: qc.create_payload_index(COLL, "path_prefixes", "keyword")
+    except Exception as ex: print(f"[Index-Warn] path_prefixes: {ex}")
 def ensure_collection():
     if not qc.collection_exists(COLL): _create_coll()
 
-def _candidates(cfg, q, n):
-    """Kandidaten holen: hybrid (dense + BM25, RRF-Fusion) oder dense-only als Fallback."""
+def src_allowed(user, src):
+    """Darf der Nutzer diese Quelle sehen/oeffnen? Nutzt die schon berechneten user['folders']."""
+    if not user or user.get("admin"):
+        return True
+    src = (src or "").replace("\\", "/").strip("/")
+    for p in user.get("folders", []):
+        if src == p or src.startswith(p + "/"):
+            return True
+    return False
+
+def acl_filter(user):
+    """Qdrant-Filter aus den erlaubten Ordner-Praefixen des Nutzers. Admin -> None (alles)."""
+    if not user or user.get("admin"):
+        return None
+    prefixes = user.get("folders", [])
+    if not prefixes:
+        # Kein Ordner freigegeben -> bewusst leeres Ergebnis erzwingen
+        return Filter(must=[FieldCondition(key="path_prefixes",
+                                           match=MatchValue(value="__none__"))])
+    return Filter(must=[FieldCondition(key="path_prefixes", match=MatchAny(any=prefixes))])
+
+def _candidates(cfg, q, n, flt=None):
+    """Kandidaten holen: hybrid (dense + BM25, RRF-Fusion) oder dense-only als Fallback.
+    flt = optionaler ACL-Filter (Ordner-Praefixe des Nutzers)."""
     if cfg.get("retrieval", {}).get("hybrid", True):
         try:
-            return qc.query_points(COLL, with_payload=True, limit=n,
-                prefetch=[Prefetch(query=emb_query(q),        using="dense", limit=n),
-                          Prefetch(query=emb_sparse_query(q), using="bm25",  limit=n)],
+            return qc.query_points(COLL, with_payload=True, limit=n, query_filter=flt,
+                prefetch=[Prefetch(query=emb_query(q),        using="dense", limit=n, filter=flt),
+                          Prefetch(query=emb_sparse_query(q), using="bm25",  limit=n, filter=flt)],
                 query=FusionQuery(fusion=Fusion.RRF)).points
         except Exception as ex:
             print(f"[Hybrid-Warn] Fallback auf Dense-Suche: {ex}")
-    return qc.query_points(COLL, query=emb_query(q), using="dense", limit=n, with_payload=True).points
+    return qc.query_points(COLL, query=emb_query(q), using="dense", limit=n,
+                           with_payload=True, query_filter=flt).points
 
 def rerank_hits(cfg, q, hits):
     """Cross-Encoder ueber die Kandidaten; Score -> Sigmoid (0..1), absteigend sortiert."""
@@ -153,12 +180,12 @@ def rerank_hits(cfg, q, hits):
         out.append(h)
     return out
 
-def retrieve(cfg, q):
+def retrieve(cfg, q, user=None):
     rcfg = cfg.get("retrieval", {})
     k = int(rcfg.get("top_k", 4))
     do_rerank = bool(rcfg.get("rerank", True))
     pool = max(int(rcfg.get("candidates", 20)), k) if do_rerank else k
-    hits = _candidates(cfg, q, pool)
+    hits = _candidates(cfg, q, pool, flt=acl_filter(user))
     if hits and do_rerank:
         try: return rerank_hits(cfg, q, hits)[:k]
         except Exception as ex: print(f"[Rerank-Warn] uebersprungen: {ex}")
@@ -309,6 +336,12 @@ def chunk(text, size=1000, overlap=150):
 def delete_source(rel):
     qc.delete(COLL, points_selector=Filter(must=[FieldCondition(key="source", match=MatchValue(value=rel))]))
 
+def path_prefixes(rel):
+    """Alle Vorgaenger-Verzeichnisse von rel (ohne Dateiname) – fuer die Ordner-ACL.
+    'Technik/Maschinen/cforce.pdf' -> ['Technik', 'Technik/Maschinen']."""
+    parts = rel.replace("\\", "/").strip("/").split("/")[:-1]
+    return ["/".join(parts[:i + 1]) for i in range(len(parts))]
+
 def index_file(rel, data, sig=None):
     ensure_collection()
     delete_source(rel)
@@ -316,8 +349,10 @@ def index_file(rel, data, sig=None):
     if not items: return 0
     texts = [t for t, _ in items]
     tenant = rel.split("/")[0] if "/" in rel else "qnap"
+    prefixes = path_prefixes(rel)
     pts = [PointStruct(id=str(uuid.uuid4()), vector={"dense": dv, "bm25": sv},
-                       payload={"text": t, "source": rel, "page": pg, "tenant": tenant, "sig": sig})
+                       payload={"text": t, "source": rel, "page": pg, "tenant": tenant,
+                                "path_prefixes": prefixes, "sig": sig})
            for (t, pg), dv, sv in zip(items, emb_passages(texts), emb_sparse_passages(texts))]
     for i in range(0, len(pts), 256): qc.upsert(COLL, points=pts[i:i+256])
     return len(pts)
@@ -414,16 +449,30 @@ def indexed_count():
     try: return qc.count(COLL).count
     except Exception: return 0
 
-def list_documents():
+def list_documents(user=None):
     ensure_collection(); srcs = {}; off = None
     try:
         while True:
             pts, off = qc.scroll(COLL, limit=256, offset=off, with_payload=["source"])
             for p in pts:
-                src = p.payload.get("source", "?"); srcs[src] = srcs.get(src, 0) + 1
+                src = p.payload.get("source", "?")
+                if user is not None and not src_allowed(user, src): continue
+                srcs[src] = srcs.get(src, 0) + 1
             if off is None: break
     except Exception: pass
     return [{"source": k, "chunks": srcs[k]} for k in sorted(srcs)]
+
+def all_prefixes():
+    """Distinct Ordner-Praefixe ueber den ganzen Index – fuer die Ordnerzuweisung im Admin."""
+    ensure_collection(); out = set(); off = None
+    try:
+        while True:
+            pts, off = qc.scroll(COLL, limit=256, offset=off, with_payload=["path_prefixes"])
+            for p in pts:
+                for pre in (p.payload.get("path_prefixes") or []): out.add(pre)
+            if off is None: break
+    except Exception: pass
+    return sorted(out)
 
 def gen_local(cfg, q, ctx):
     en = cfg["engines"]["local"]
@@ -517,9 +566,33 @@ class ConfigIn(BaseModel):
     retrieval: Optional[dict] = None
     engines: Optional[dict] = None
     sources: Optional[dict] = None
+class LoginIn(BaseModel):
+    username: str
+    password: str
+class TwoFALoginIn(BaseModel):
+    pending: str
+    code: str
+class PwChangeIn(BaseModel):
+    old_password: str
+    new_password: str
+class CodeIn(BaseModel):
+    code: str
+class PwIn(BaseModel):
+    password: str
+class UserIn(BaseModel):
+    username: Optional[str] = None
+    label: Optional[str] = None
+    password: Optional[str] = None
+    admin: Optional[bool] = None
+    groups: Optional[List[str]] = None
+    reset_2fa: Optional[bool] = None
+class GroupIn(BaseModel):
+    id: Optional[str] = None
+    label: Optional[str] = None
+    folders: Optional[List[str]] = None
 
 @app.get("/api/engines")
-def engines():
+def engines(user: dict = Depends(auth.require_user)):
     cfg = load_config(); out = []
     for e in ORDER:
         en = cfg["engines"][e]
@@ -528,7 +601,7 @@ def engines():
     return out
 
 @app.get("/api/ollama/models")
-def ollama_models(url: str = ""):
+def ollama_models(url: str = "", user: dict = Depends(auth.require_admin)):
     url = (url or "").strip().rstrip("/")
     if not url:
         return JSONResponse({"error": "Keine Ollama-URL angegeben."}, status_code=400)
@@ -542,11 +615,11 @@ def ollama_models(url: str = ""):
         return JSONResponse({"error": f"Ollama unter '{url}' nicht erreichbar: {ex}"}, status_code=400)
 
 @app.post("/api/ask")
-def ask(r: AskReq):
+def ask(r: AskReq, user: dict = Depends(auth.require_user)):
     cfg = load_config(); e = r.engine or cfg["default_engine"]
     if e not in GENERATORS or not engine_available(cfg, e):
         return JSONResponse({"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."}, status_code=400)
-    hits = retrieve(cfg, r.question)
+    hits = retrieve(cfg, r.question, user)
     context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
     sources = sorted({h.payload["source"] for h in hits})
     try: answer = GENERATORS[e](cfg, r.question, context)
@@ -554,13 +627,13 @@ def ask(r: AskReq):
     return {"answer": answer, "sources": sources, "engine": LABELS[e]}
 
 @app.post("/api/ask/stream")
-def ask_stream(r: AskReq):
+def ask_stream(r: AskReq, user: dict = Depends(auth.require_user)):
     cfg = load_config(); e = r.engine or cfg["default_engine"]
     if e not in STREAMERS or not engine_available(cfg, e):
         def err():
             yield sse("error", {"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."})
         return StreamingResponse(err(), media_type="text/event-stream")
-    hits = retrieve(cfg, r.question)
+    hits = retrieve(cfg, r.question, user)
     context = "\n\n".join(f"[Quelle: {h.payload['source']}]\n{h.payload['text']}" for h in hits)
     sources = rank_sources(hits)
     messages = build_messages(r.history, r.question, context)
@@ -576,7 +649,7 @@ def ask_stream(r: AskReq):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.get("/api/config")
-def get_config():
+def get_config(user: dict = Depends(auth.require_admin)):
     cfg = load_config(); raw = load_raw()
     out = {"default_engine": cfg["default_engine"], "retrieval": cfg["retrieval"], "engines": {}, "indexed_chunks": indexed_count()}
     for e in ORDER:
@@ -593,7 +666,7 @@ def get_config():
     return out
 
 @app.post("/api/config")
-def set_config(c: ConfigIn):
+def set_config(c: ConfigIn, user: dict = Depends(auth.require_admin)):
     cfg = load_raw()
     if c.default_engine: cfg["default_engine"] = c.default_engine
     if c.retrieval: cfg["retrieval"].update(c.retrieval)
@@ -615,12 +688,12 @@ def set_config(c: ConfigIn):
     return {"ok": True}
 
 @app.get("/api/status")
-def api_status():
+def api_status(user: dict = Depends(auth.require_user)):
     with _state_lock: st = dict(STATE)
     st["indexed_chunks"] = indexed_count(); return st
 
 @app.post("/api/ingest")
-def api_ingest(full: bool = False):
+def api_ingest(full: bool = False, user: dict = Depends(auth.require_admin)):
     # Asynchron: im Hintergrund-Thread starten, sofort zurueckkehren.
     # Fortschritt + Ergebnis holt das Frontend ueber /api/status.
     with _state_lock:
@@ -642,14 +715,14 @@ def api_ingest(full: bool = False):
     return {"ok": True, "started": True, "full": full}
 
 @app.get("/api/documents")
-def api_documents():
-    docs = list_documents()
+def api_documents(user: dict = Depends(auth.require_user)):
+    docs = list_documents(user)
     return {"documents": docs, "total_chunks": sum(d["chunks"] for d in docs)}
 
 @app.get("/api/document")
-def api_document(source: str):
-    # Nur tatsaechlich indizierte Quellen erlauben -> kein Path-Traversal
-    known = {d["source"] for d in list_documents()}
+def api_document(source: str, user: dict = Depends(auth.require_user)):
+    # Nur tatsaechlich indizierte UND fuer den Nutzer freigegebene Quellen erlauben
+    known = {d["source"] for d in list_documents(user)}
     if source not in known:
         return JSONResponse({"error": "Unbekannte Quelle."}, status_code=404)
     cfg = load_config(); s = cfg["sources"]["smb"]
@@ -667,24 +740,38 @@ def api_document(source: str):
     return Response(content=data, media_type=ctype, headers=headers)
 
 @app.post("/api/upload")
-async def api_upload(files: List[UploadFile] = File(...)):
+async def api_upload(files: List[UploadFile] = File(...), folder: str = Form(""),
+                     user: dict = Depends(auth.require_user)):
     cfg = load_config(); s = cfg["sources"]["smb"]
     if not s.get("share") or not s.get("username"):
         return JSONResponse({"error": "SMB-Quelle ist nicht konfiguriert (Share/Benutzer fehlen)."}, status_code=400)
+    # Zielordner (relativ zur Share-Wurzel) bestimmen + Schreibrecht pruefen
+    folder = (folder or "").strip().strip("/").replace("\\", "/")
+    if not folder:
+        if not user["admin"]:
+            return JSONResponse({"error": "Bitte einen Zielordner waehlen."}, status_code=400)
+        sub = (s.get("path") or "").strip().strip("\\/").replace("\\", "/")
+        folder = sub  # Admin ohne Ordner -> konfigurierter Standardpfad
+    if not src_allowed(user, folder):
+        return JSONResponse({"error": "Kein Schreibrecht fuer diesen Ordner."}, status_code=403)
     try: smbclient, root, base, sub = smb_connect(s)
     except Exception as ex: return JSONResponse({"error": f"SMB-Verbindung fehlgeschlagen: {ex}"}, status_code=400)
+    destdir = root + ("\\" + folder.replace("/", "\\") if folder else "")
+    try:
+        if folder: smbclient.makedirs(destdir, exist_ok=True)
+    except Exception: pass
     results = []
     for uf in files:
         name = os.path.basename(uf.filename or "")
         if not name.lower().endswith(EXTS):
             results.append({"file": name, "error": "Dateityp nicht unterstuetzt"}); continue
         data = await uf.read()
-        dest = base + "\\" + name
+        dest = destdir + "\\" + name
         try:
             with smbclient.open_file(dest, mode="wb") as fd: fd.write(data)
         except Exception as ex:
             results.append({"file": name, "error": f"Schreiben auf QNAP fehlgeschlagen: {ex}"}); continue
-        rel = (sub.replace("\\", "/") + "/" if sub else "") + name
+        rel = (folder + "/" if folder else "") + name
         try: sig = file_sig(smbclient.stat(dest))
         except Exception: sig = None
         try: results.append({"file": name, "chunks": index_file(rel, data, sig)})
@@ -702,5 +789,174 @@ def _warmup_reranker():
 # (einmalig ~10 s Verzögerung). Mit RERANK_WARMUP=1 wieder aktivierbar.
 if os.environ.get("RERANK_WARMUP", "0") == "1":
     threading.Thread(target=_warmup_reranker, daemon=True).start()
+
+# ===================== Authentifizierung & Konto =====================
+auth.bootstrap_admin()
+
+@app.post("/api/login")
+def login(r: LoginIn):
+    uname = r.username.strip().lower()
+    if auth.is_locked(uname):
+        return JSONResponse({"error": "Zu viele Fehlversuche. Bitte kurz warten."}, status_code=429)
+    store = auth.load_store(); u = store["users"].get(uname)
+    if not u or not auth.verify_pw(r.password, u.get("pw_hash", "")):
+        auth.note_fail(uname)
+        return JSONResponse({"error": "Benutzername oder Passwort falsch."}, status_code=401)
+    auth.note_success(uname)
+    if u.get("totp_enabled"):
+        return {"need_2fa": True, "pending": auth.create_pending(uname)}
+    resp = JSONResponse({"ok": True}); auth.set_cookie(resp, auth.create_session(uname))
+    return resp
+
+@app.post("/api/login/2fa")
+def login_2fa(r: TwoFALoginIn):
+    uname = auth.consume_pending(r.pending)
+    if not uname:
+        return JSONResponse({"error": "Anmeldung abgelaufen, bitte erneut einloggen."}, status_code=400)
+    store = auth.load_store(); u = store["users"].get(uname)
+    if not u or not auth.totp_verify(u.get("totp_secret"), r.code):
+        return JSONResponse({"error": "Code ungueltig."}, status_code=401)
+    resp = JSONResponse({"ok": True}); auth.set_cookie(resp, auth.create_session(uname))
+    return resp
+
+@app.post("/api/logout")
+def logout(request: Request):
+    tok = request.cookies.get(auth.COOKIE_NAME)
+    if tok: auth.destroy_session(tok)
+    resp = JSONResponse({"ok": True}); auth.clear_cookie(resp); return resp
+
+@app.get("/api/me")
+def me(user: dict = Depends(auth.require_user)):
+    return user
+
+@app.post("/api/account/password")
+def change_pw(r: PwChangeIn, user: dict = Depends(auth.require_user)):
+    store = auth.load_store(); u = store["users"][user["username"]]
+    if not auth.verify_pw(r.old_password, u.get("pw_hash", "")):
+        return JSONResponse({"error": "Aktuelles Passwort falsch."}, status_code=401)
+    if len(r.new_password) < 8:
+        return JSONResponse({"error": "Neues Passwort muss mind. 8 Zeichen haben."}, status_code=400)
+    u["pw_hash"] = auth.hash_pw(r.new_password); auth.save_store(store)
+    return {"ok": True}
+
+@app.post("/api/2fa/setup")
+def twofa_setup(user: dict = Depends(auth.require_user)):
+    store = auth.load_store(); u = store["users"][user["username"]]
+    secret = auth.new_totp_secret()
+    u["totp_secret"] = secret; u["totp_enabled"] = False  # erst nach Verify aktiv
+    auth.save_store(store)
+    uri = auth.totp_uri(secret, user["username"])
+    return {"secret": secret, "otpauth_url": uri, "qr": auth.qr_png_base64(uri)}
+
+@app.post("/api/2fa/enable")
+def twofa_enable(r: CodeIn, user: dict = Depends(auth.require_user)):
+    store = auth.load_store(); u = store["users"][user["username"]]
+    if not auth.totp_verify(u.get("totp_secret"), r.code):
+        return JSONResponse({"error": "Code ungueltig."}, status_code=401)
+    u["totp_enabled"] = True; auth.save_store(store)
+    return {"ok": True}
+
+@app.post("/api/2fa/disable")
+def twofa_disable(r: PwIn, user: dict = Depends(auth.require_user)):
+    store = auth.load_store(); u = store["users"][user["username"]]
+    if not auth.verify_pw(r.password, u.get("pw_hash", "")):
+        return JSONResponse({"error": "Passwort falsch."}, status_code=401)
+    u["totp_secret"] = None; u["totp_enabled"] = False; auth.save_store(store)
+    return {"ok": True}
+
+# ===================== Admin: Nutzer & Gruppen =====================
+def _user_public(uname, u):
+    return {"username": uname, "label": u.get("label", uname), "admin": bool(u.get("admin")),
+            "groups": u.get("groups", []), "totp_enabled": bool(u.get("totp_enabled"))}
+def _count_admins(store): return sum(1 for x in store["users"].values() if x.get("admin"))
+def _slug(s):
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").strip().lower()).strip("-")
+
+@app.get("/api/admin/users")
+def admin_users(user: dict = Depends(auth.require_admin)):
+    store = auth.load_store()
+    return {"users": [_user_public(k, v) for k, v in sorted(store["users"].items())]}
+
+@app.post("/api/admin/users")
+def admin_user_create(r: UserIn, user: dict = Depends(auth.require_admin)):
+    uname = (r.username or "").strip().lower()
+    if not uname or not r.password:
+        return JSONResponse({"error": "Benutzername und Passwort erforderlich."}, status_code=400)
+    store = auth.load_store()
+    if uname in store["users"]:
+        return JSONResponse({"error": "Benutzer existiert bereits."}, status_code=409)
+    store["users"][uname] = {"label": r.label or uname, "pw_hash": auth.hash_pw(r.password),
+        "admin": bool(r.admin), "groups": r.groups or [], "totp_secret": None, "totp_enabled": False}
+    auth.save_store(store)
+    return {"ok": True}
+
+@app.put("/api/admin/users/{uname}")
+def admin_user_update(uname: str, r: UserIn, user: dict = Depends(auth.require_admin)):
+    uname = uname.strip().lower()
+    store = auth.load_store(); u = store["users"].get(uname)
+    if not u: return JSONResponse({"error": "Unbekannter Benutzer."}, status_code=404)
+    if r.label is not None: u["label"] = r.label
+    if r.groups is not None: u["groups"] = r.groups
+    if r.admin is not None:
+        if not r.admin and u.get("admin") and _count_admins(store) <= 1:
+            return JSONResponse({"error": "Der letzte Admin kann nicht entzogen werden."}, status_code=400)
+        u["admin"] = bool(r.admin)
+    if r.password: u["pw_hash"] = auth.hash_pw(r.password)
+    if r.reset_2fa: u["totp_secret"] = None; u["totp_enabled"] = False
+    auth.save_store(store)
+    return {"ok": True}
+
+@app.delete("/api/admin/users/{uname}")
+def admin_user_delete(uname: str, user: dict = Depends(auth.require_admin)):
+    uname = uname.strip().lower()
+    store = auth.load_store(); u = store["users"].get(uname)
+    if not u: return JSONResponse({"error": "Unbekannter Benutzer."}, status_code=404)
+    if uname == user["username"]:
+        return JSONResponse({"error": "Du kannst dich nicht selbst loeschen."}, status_code=400)
+    if u.get("admin") and _count_admins(store) <= 1:
+        return JSONResponse({"error": "Der letzte Admin kann nicht geloescht werden."}, status_code=400)
+    del store["users"][uname]; auth.save_store(store)
+    return {"ok": True}
+
+@app.get("/api/admin/groups")
+def admin_groups(user: dict = Depends(auth.require_admin)):
+    store = auth.load_store()
+    return {"groups": [{"id": k, "label": v.get("label", k), "folders": v.get("folders", [])}
+                       for k, v in sorted(store["groups"].items())]}
+
+@app.post("/api/admin/groups")
+def admin_group_create(r: GroupIn, user: dict = Depends(auth.require_admin)):
+    gid = _slug(r.id or r.label)
+    if not gid: return JSONResponse({"error": "Name erforderlich."}, status_code=400)
+    store = auth.load_store()
+    if gid in store["groups"]:
+        return JSONResponse({"error": "Gruppe existiert bereits."}, status_code=409)
+    store["groups"][gid] = {"label": r.label or gid, "folders": r.folders or []}
+    auth.save_store(store)
+    return {"ok": True, "id": gid}
+
+@app.put("/api/admin/groups/{gid}")
+def admin_group_update(gid: str, r: GroupIn, user: dict = Depends(auth.require_admin)):
+    store = auth.load_store(); g = store["groups"].get(gid)
+    if not g: return JSONResponse({"error": "Unbekannte Gruppe."}, status_code=404)
+    if r.label is not None: g["label"] = r.label
+    if r.folders is not None: g["folders"] = r.folders
+    auth.save_store(store)
+    return {"ok": True}
+
+@app.delete("/api/admin/groups/{gid}")
+def admin_group_delete(gid: str, user: dict = Depends(auth.require_admin)):
+    store = auth.load_store()
+    if gid not in store["groups"]:
+        return JSONResponse({"error": "Unbekannte Gruppe."}, status_code=404)
+    del store["groups"][gid]
+    for u in store["users"].values():
+        if gid in u.get("groups", []): u["groups"] = [x for x in u["groups"] if x != gid]
+    auth.save_store(store)
+    return {"ok": True}
+
+@app.get("/api/admin/folders")
+def admin_folders(user: dict = Depends(auth.require_admin)):
+    return {"folders": all_prefixes()}
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
