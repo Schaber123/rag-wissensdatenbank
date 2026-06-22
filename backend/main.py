@@ -38,6 +38,7 @@ DEFAULTS = {
         "gemini": {"enabled": False, "api_key": "", "model": "gemini-2.0-flash"},
     },
     "sources": {"smb": {"enabled": False, "host": "192.168.1.5", "share": "", "path": "", "username": "", "password": ""}},
+    "branding": {"logo": "logo.png", "logo_height": 34},
 }
 ENV_KEYS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GOOGLE_API_KEY"}
 LABELS   = {"local": "Lokal · Mac", "claude": "Claude (Anthropic)", "openai": "ChatGPT (OpenAI)", "gemini": "Google Gemini"}
@@ -194,19 +195,28 @@ def retrieve(cfg, q, user=None):
 SOURCE_REL_MARGIN = float(os.environ.get("SOURCE_REL_MARGIN", "0.15"))
 def rank_sources(hits):
     """Quellen nach bestem Chunk-Score, nur die relevanten (nahe am Top-Score), min. 1.
-       Relativer Abstand -> skalenunabhaengig (passt fuer Rerank-, RRF- und Cosine-Scores)."""
-    best = {}  # source -> (score, page) des besten Chunks
+       Relativer Abstand -> skalenunabhaengig (passt fuer Rerank-, RRF- und Cosine-Scores).
+       Pro Quelle werden ALLE Seiten der relevanten Chunks aufgelistet (z. B. „S. 1, 50"),
+       nach Score sortiert (beste Fundstelle zuerst), statt nur die eine Top-Seite."""
+    by_src = {}  # source -> {"best": score, "pages": [(page, score), ...]}
     for h in hits:
-        src = h.payload.get("source", "?"); sc = float(h.score)
-        if src not in best or sc > best[src][0]: best[src] = (sc, h.payload.get("page"))
-    ranked = sorted(best.items(), key=lambda x: -x[1][0])
-    if not ranked: return []
-    thr = ranked[0][1][0] * (1.0 - SOURCE_REL_MARGIN)
+        src = h.payload.get("source", "?"); sc = float(h.score); pg = h.payload.get("page")
+        d = by_src.setdefault(src, {"best": sc, "pages": []})
+        if sc > d["best"]: d["best"] = sc
+        if pg is not None: d["pages"].append((pg, sc))
+    if not by_src: return []
+    ranked = sorted(by_src.items(), key=lambda x: -x[1]["best"])
+    thr = ranked[0][1]["best"] * (1.0 - SOURCE_REL_MARGIN)
     out = []
-    for s, (sc, pg) in ranked:
-        if sc < thr: continue
-        item = {"source": s, "score": round(sc, 3)}
-        if pg: item["page"] = pg
+    for s, d in ranked:
+        if d["best"] < thr: continue
+        item = {"source": s, "score": round(d["best"], 3)}
+        # beste Seite je Seitenzahl behalten, dann nach Score absteigend sortieren
+        bestpg = {}
+        for pg, sc in d["pages"]:
+            if pg not in bestpg or sc > bestpg[pg]: bestpg[pg] = sc
+        pages = [pg for pg, _ in sorted(bestpg.items(), key=lambda x: -x[1])]
+        if pages: item["pages"] = pages
         out.append(item)
     return out
 
@@ -566,6 +576,7 @@ class ConfigIn(BaseModel):
     retrieval: Optional[dict] = None
     engines: Optional[dict] = None
     sources: Optional[dict] = None
+    branding: Optional[dict] = None
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -684,6 +695,12 @@ def set_config(c: ConfigIn, user: dict = Depends(auth.require_admin)):
         for f in ("host", "share", "path", "username"):
             if f in smb: tgt[f] = smb[f]
         if smb.get("password"): tgt["password"] = smb["password"]
+    if c.branding:
+        tgt = cfg.setdefault("branding", _clone(DEFAULTS["branding"]))
+        if "logo_height" in c.branding:
+            try: tgt["logo_height"] = max(16, min(120, int(c.branding["logo_height"])))
+            except Exception: pass
+        if c.branding.get("logo"): tgt["logo"] = c.branding["logo"]
     save_config(cfg)
     return {"ok": True}
 
@@ -789,6 +806,30 @@ def _warmup_reranker():
 # (einmalig ~10 s Verzögerung). Mit RERANK_WARMUP=1 wieder aktivierbar.
 if os.environ.get("RERANK_WARMUP", "0") == "1":
     threading.Thread(target=_warmup_reranker, daemon=True).start()
+
+# ===================== Branding (Logo) =====================
+LOGO_EXTS = ("png", "jpg", "jpeg", "svg", "webp", "gif")
+
+@app.get("/api/branding")
+def get_branding():
+    # Oeffentlich: auch die Login-Seite braucht das Logo, bevor man angemeldet ist.
+    b = load_raw().get("branding") or DEFAULTS["branding"]
+    return {"logo": b.get("logo", "logo.png"), "logo_height": int(b.get("logo_height", 34))}
+
+@app.post("/api/branding/logo")
+async def set_branding_logo(file: UploadFile = File(...), user: dict = Depends(auth.require_admin)):
+    name = os.path.basename(file.filename or "")
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if ext not in LOGO_EXTS:
+        return JSONResponse({"error": "Bildformat nicht unterstuetzt (png/jpg/svg/webp/gif)."}, status_code=400)
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024:
+        return JSONResponse({"error": "Datei zu gross (max. 2 MB)."}, status_code=400)
+    fn = "logo-custom." + ext
+    with open(os.path.join("static", fn), "wb") as f: f.write(data)
+    cfg = load_raw(); cfg.setdefault("branding", _clone(DEFAULTS["branding"]))["logo"] = fn
+    save_config(cfg)
+    return {"ok": True, "logo": fn}
 
 # ===================== Authentifizierung & Konto =====================
 auth.bootstrap_admin()

@@ -173,6 +173,24 @@ button.secondary:disabled{opacity:.5;cursor:not-allowed}
 .admin-row{background:var(--panel-2)}
 #upload-folder-row input{width:100%}
 
+/* --- Logo-Vorschau (Einstellungen) --- */
+.logo-preview{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.9rem;display:flex;align-items:center;justify-content:center;margin-bottom:.8rem}
+.logo-preview img{width:auto;max-width:100%}
+#logo_height{padding:0}
+
+/* --- Chat-Tabs --- */
+.chattabs{display:flex;align-items:center;gap:.25rem;padding:.4rem .75rem 0;background:var(--header);border-bottom:1px solid var(--line);overflow-x:auto}
+.chattab{display:flex;align-items:center;gap:.45rem;background:var(--panel);border:1px solid var(--line);border-bottom:none;
+  border-radius:8px 8px 0 0;padding:.45rem .65rem;font-size:.82rem;color:var(--muted);cursor:pointer;white-space:nowrap;max-width:220px;transition:.12s}
+.chattab:hover{color:var(--text)}
+.chattab.active{color:#fff;border-color:var(--primary);background:var(--bg)}
+.chattab-label{overflow:hidden;text-overflow:ellipsis}
+.chattab-close{background:none;border:none;color:inherit;cursor:pointer;font-size:1.05rem;line-height:1;padding:0 .15rem;opacity:.55}
+.chattab-close:hover{opacity:1;color:#f87171}
+.chattab-add{background:var(--panel);border:1px solid var(--line);color:var(--muted);border-radius:8px;cursor:pointer;
+  font-size:.85rem;padding:.4rem .65rem;line-height:1;transition:.12s}
+.chattab-add:hover{border-color:var(--primary);color:#fff}
+
 /* --- Indexierung-laeuft-Banner --- */
 .idx-banner{background:#3a2d0b;color:#fbbf24;border-bottom:1px solid #6b5410;
   text-align:center;font-size:.85rem;font-weight:500;padding:.5rem;letter-spacing:.2px;

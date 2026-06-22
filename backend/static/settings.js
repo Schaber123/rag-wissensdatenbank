@@ -287,6 +287,50 @@ async function populateFolders(me){
   dl.innerHTML = ""; folders.forEach(f => { const o=document.createElement("option"); o.value=f; dl.appendChild(o); });
 }
 
+// --- Branding / Logo ---
+let logoH = 34;
+function applyLogoPreview(){
+  $("logo_h_val").textContent = logoH;
+  $("logo_height").value = logoH;
+  $("logo_prev").style.height = logoH + "px";
+}
+async function loadBranding(){
+  try{
+    const b = await fetch("/api/branding").then(r=>r.json());
+    logoH = b.logo_height || 34;
+    $("logo_prev").src = (b.logo || "logo.png") + "?v=" + Date.now();
+    applyLogoPreview();
+  }catch(e){}
+}
+if ($("logo_height")) $("logo_height").addEventListener("input", () => {
+  logoH = parseInt($("logo_height").value) || 34; applyLogoPreview();
+});
+if ($("logo_file")) $("logo_file").addEventListener("change", () => {
+  const f = $("logo_file").files[0];
+  if (f){ const url = URL.createObjectURL(f); $("logo_prev").src = url; }
+});
+if ($("branding_save")) $("branding_save").addEventListener("click", async () => {
+  const st = $("branding_status"); st.textContent = "Speichere…";
+  try{
+    const f = $("logo_file").files[0];
+    if (f){
+      const fd = new FormData(); fd.append("file", f);
+      const res = await fetch("/api/branding/logo", {method:"POST", body: fd});
+      const d = await res.json().catch(()=>({}));
+      if (!res.ok){ st.textContent = "⚠️ " + (d.error||"Fehler beim Logo-Upload"); return; }
+      $("logo_file").value = "";
+    }
+    await fetch("/api/config", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({branding:{logo_height: logoH}})});
+    st.textContent = "✓ gespeichert";
+    // Topbar-Logo + Vorschau sofort aktualisieren
+    const b = await fetch("/api/branding").then(r=>r.json());
+    const src = (b.logo||"logo.png") + "?v=" + Date.now();
+    document.querySelectorAll("img.logo").forEach(img => { img.src = src; img.style.height = (b.logo_height||34)+"px"; });
+  }catch(e){ st.textContent = "⚠️ " + e.message; }
+  setTimeout(()=>st.textContent="", 4000);
+});
+
 // --- Init: Rechte des angemeldeten Nutzers anwenden ---
 async function init(){
   let me;
@@ -298,6 +342,7 @@ async function init(){
   loadDocuments();
   if (me.admin){
     loadConfig();
+    loadBranding();
   } else {
     // Admin-Bereiche ausblenden, Standard-Tab auf "Datenquelle & Dokumente"
     document.querySelectorAll(".tab[data-admin]").forEach(t => t.style.display = "none");

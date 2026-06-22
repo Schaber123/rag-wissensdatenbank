@@ -115,6 +115,18 @@
           <input id="r_rerank_model" type="text" placeholder="jinaai/jina-reranker-v2-base-multilingual"></div>
         <p class="note">Mehrsprachiges Modell empfohlen (Standard). Wird beim ersten Einsatz automatisch geladen.</p>
       </section>
+
+      <section class="card" id="branding-card">
+        <h2>Logo</h2>
+        <p class="note">Das Logo oben links austauschen und in der Gr&ouml;&szlig;e anpassen. Wirkt auf alle Seiten (Chat, Login, Einstellungen).</p>
+        <div class="logo-preview"><img id="logo_prev" class="logo" src="logo.png" alt="Logo-Vorschau"></div>
+        <div class="row"><label for="logo_file">Neues Logo (PNG, JPG, SVG, WebP &ndash; max. 2 MB)</label>
+          <input id="logo_file" type="file" accept=".png,.jpg,.jpeg,.svg,.webp,.gif"></div>
+        <div class="row"><label for="logo_height">Gr&ouml;&szlig;e: <span id="logo_h_val"></span>&nbsp;px</label>
+          <input id="logo_height" type="range" min="20" max="80" step="1"></div>
+        <div class="actions"><button id="branding_save" type="button">Logo speichern</button>
+          <span id="branding_status" class="status"></span></div>
+      </section>
     </section>
 
     <!-- TAB: Mein Konto -->
@@ -163,6 +175,7 @@
   <footer class="footer">
     &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
   </footer>
+  <script src="branding.js"></script>
   <script src="guard.js"></script>
   <script src="settings.js"></script>
 </body>

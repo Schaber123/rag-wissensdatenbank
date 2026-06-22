@@ -286,6 +286,11 @@ ssh root@192.168.1.211 'docker logs --tail 50 rag-backend'
 
 ## 9. Historie
 
+- **2026-06-22 (3):** **Logo austauschbar + größenverstellbar** (Settings → Allgemein → Logo; `/api/branding`
+  öffentlich, `POST /api/branding/logo` admin; `branding.js` auf allen Seiten). **Chat-Tabs** wie im Browser
+  (mehrere Chats parallel, je Tab eigener Verlauf in `localStorage`, „+"-Tab + ×-Schließen; „Neuer Chat" = neuer
+  Tab statt Überschreiben). **Quellen listen jetzt alle relevanten Seiten** je Dokument (z. B. „S. 50, 1, 51",
+  beste zuerst) statt nur der Top-Seite — `rank_sources` sammelt Seiten aller relevanten Chunks.
 - **2026-06-22 (2):** **Authentifizierung + Nutzer/Gruppen + ordnerbasierte ACL** (Abschnitt 10). Neue
   `backend/auth.py`, Endpoints `/api/login`, `/api/me`, `/api/2fa/*`, `/api/admin/*`; `Depends`-Gating; ACL-Filter
   in der Suche via Payload-Feld `path_prefixes`; UIs `login.html`/`admin.html` + „Mein Konto" in den Settings.

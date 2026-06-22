@@ -15,7 +15,7 @@
       <span class="brand-text">Wissens-Chat</span>
     </div>
     <div class="topbar-right">
-      <button id="newchat" type="button" class="newchat" title="Neuer Chat">&#10010; Neuer Chat</button>
+      <button id="newchat" type="button" class="newchat" title="Neuer Chat in neuem Tab">&#10010; Neuer Chat</button>
       <div class="engine-box">
         <label for="engine">Engine</label>
         <select id="engine"></select>
@@ -23,6 +23,8 @@
       <a class="gear" href="settings.html" title="Einstellungen" aria-label="Einstellungen">&#9881;</a>
     </div>
   </header>
+
+  <nav class="chattabs" id="chattabs"></nav>
 
   <main id="chat" class="chat">
     <div class="welcome">
@@ -45,6 +47,7 @@
     &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
   </footer>
 
+  <script src="branding.js"></script>
   <script src="guard.js"></script>
   <script src="app.js"></script>
 </body>
