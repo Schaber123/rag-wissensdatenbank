@@ -414,11 +414,16 @@ def ingest_smb(full=False):
     # 1) Aktuellen Dateibestand auf dem Share inkl. Signatur erfassen (ohne Inhalt zu laden)
     set_indexing(True, "Dateiliste wird gelesen…")
     current = {}  # rel -> sig
-    for dp, _d, files in smbclient.walk(base):
+    for dp, dirs, files in smbclient.walk(base):
+        # QNAP-System-/Versteckordner ueberspringen (@Recycle, @Recently-Snapshot, .…)
+        dirs[:] = [d for d in dirs if not d.startswith("@") and not d.startswith(".")]
         for fn in files:
+            if fn.startswith("."): continue
             if fn.lower().endswith(EXTS):
                 full_p = dp + "\\" + fn
                 rel = full_p[len(root):].strip("\\").replace("\\", "/")
+                # Sicherheitsnetz: keine Segmente aus System-/Versteckordnern
+                if any(seg.startswith("@") or seg.startswith(".") for seg in rel.split("/")): continue
                 try: current[rel] = file_sig(smbclient.stat(full_p))
                 except Exception: current[rel] = None
 
@@ -471,6 +476,20 @@ def list_documents(user=None):
             if off is None: break
     except Exception: pass
     return [{"source": k, "chunks": srcs[k]} for k in sorted(srcs)]
+
+def smb_folders():
+    """Tatsaechliche Ordner (rekursiv) auf dem SMB-Share, relativ zur Share-Wurzel,
+    ohne QNAP-System-/Versteckordner. Fuer Ordnerauswahl auch VOR dem Indexieren."""
+    cfg = load_config(); s = cfg["sources"]["smb"]
+    out = set()
+    smbclient, root, base, sub = smb_connect(s)
+    for dp, dirs, files in smbclient.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith("@") and not d.startswith(".")]
+        rel = dp[len(root):].strip("\\").replace("\\", "/")
+        if not rel: continue
+        if any(seg.startswith("@") or seg.startswith(".") for seg in rel.split("/")): continue
+        out.add(rel)
+    return sorted(out)
 
 def all_prefixes():
     """Distinct Ordner-Praefixe ueber den ganzen Index – fuer die Ordnerzuweisung im Admin."""
@@ -733,6 +752,18 @@ def api_ingest(full: bool = False, user: dict = Depends(auth.require_admin)):
             set_indexing(False)
     threading.Thread(target=worker, daemon=True).start()
     return {"ok": True, "started": True, "full": full}
+
+@app.get("/api/folders")
+def api_folders(user: dict = Depends(auth.require_user)):
+    """Ordner auf dem Share fuer die Upload-Auswahl – gefiltert nach Berechtigung
+    (Admin: alle; sonst nur Ordner, fuer die der Nutzer freigegeben ist)."""
+    try:
+        folders = smb_folders()
+    except Exception as ex:
+        return JSONResponse({"error": f"Ordner nicht abrufbar: {ex}", "folders": user.get("folders", [])}, status_code=200)
+    if not user.get("admin"):
+        folders = [f for f in folders if src_allowed(user, f)]
+    return {"folders": folders}
 
 @app.get("/api/documents")
 def api_documents(user: dict = Depends(auth.require_user)):
@@ -1052,6 +1083,10 @@ def admin_group_delete(gid: str, user: dict = Depends(auth.require_admin)):
 
 @app.get("/api/admin/folders")
 def admin_folders(user: dict = Depends(auth.require_admin)):
-    return {"folders": all_prefixes()}
+    # Indizierte Praefixe + tatsaechliche Share-Ordner (auch noch nicht indizierte)
+    folders = set(all_prefixes())
+    try: folders |= set(smb_folders())
+    except Exception: pass
+    return {"folders": sorted(folders)}
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

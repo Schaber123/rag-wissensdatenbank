@@ -281,8 +281,9 @@ async function populateFolders(me){
   const dl = $("folder-options"); if (!dl) return;
   let folders = [];
   try{
-    if (me.admin){ const d = await fetch("/api/admin/folders").then(r=>r.json()); folders = d.folders||[]; }
-    else folders = me.folders||[];
+    // tatsaechliche Share-Ordner, serverseitig nach Berechtigung gefiltert
+    const d = await fetch("/api/folders").then(r=>r.json());
+    folders = d.folders || [];
   }catch(e){ folders = me.folders||[]; }
   dl.innerHTML = ""; folders.forEach(f => { const o=document.createElement("option"); o.value=f; dl.appendChild(o); });
 }
