@@ -5,5 +5,6 @@
     const h = b.logo_height || 34;
     document.querySelectorAll("img.logo").forEach(img => { img.src = src; img.style.height = h + "px"; });
     document.documentElement.style.setProperty("--logo-h", h + "px");
+    if (b.version) document.querySelectorAll(".appver").forEach(el => { el.textContent = "V" + b.version; });
   }).catch(() => {});
 })();

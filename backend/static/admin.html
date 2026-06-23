@@ -6,7 +6,8 @@
   <title>Tech-IT &middot; Verwaltung</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260622-7">
+  <script src="theme.js?v=20260622-6"></script>
 </head>
 <body>
   <header class="topbar">
@@ -34,7 +35,7 @@
           <div class="row"><label>Benutzername</label><input id="nu_name" type="text" autocomplete="off"></div>
           <div class="row"><label>Anzeigename</label><input id="nu_label" type="text" autocomplete="off"></div>
           <div class="row"><label>Passwort</label><input id="nu_pw" type="password" autocomplete="new-password"></div>
-          <div class="row"><label class="switch"><input id="nu_admin" type="checkbox"><span>Administrator</span></label></div>
+          <div class="row" id="nu_admin_row"><label class="switch"><input id="nu_admin" type="checkbox"><span>Administrator</span></label></div>
         </div>
         <div class="row"><label>Gruppen</label><div id="nu_groups" class="checkbox-grid"></div></div>
         <div class="actions"><button id="nu_create" type="button">Nutzer anlegen</button><span id="nu_status" class="status"></span></div>
@@ -67,10 +68,10 @@
   </main>
 
   <footer class="footer">
-    &copy; <span id="year"></span> Tech-IT Consulting &middot; Verwaltung
+    &copy; <span id="year"></span> Tech-IT Consulting &middot; Verwaltung &middot; <span class="appver"></span>
   </footer>
-  <script src="branding.js"></script>
+  <script src="branding.js?v=20260623-2"></script>
   <script src="guard.js"></script>
-  <script src="admin.js"></script>
+  <script src="admin.js?v=20260622-5"></script>
 </body>
 </html>

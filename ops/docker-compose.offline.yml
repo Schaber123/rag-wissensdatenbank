@@ -1,0 +1,39 @@
+# Offline-/Portable-Variante der RAG Wissensdatenbank.
+# Nutzt das vorgebaute Image (kein "build:"), damit kein Internet noetig ist.
+# Fester Projektname -> deterministische Volume-Namen (rag-wissensdatenbank_*).
+name: rag-wissensdatenbank
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  backend:
+    image: rag-backend:latest
+    container_name: rag-backend
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    env_file:
+      - .env
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - EMBED_MODEL=intfloat/multilingual-e5-large
+      - FASTEMBED_CACHE=/models
+      # Lokale LLM-Engine: hier die erreichbare Ollama-URL des Zielservers eintragen
+      # (oder leer lassen und im Webinterface eine Cloud-Engine nutzen).
+      - OLLAMA_URL=${OLLAMA_URL:-http://127.0.0.1:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+    volumes:
+      - ./backend:/srv          # Code + persistente config.json/users.json
+      - models:/models          # Embedding-/Reranker-/Whisper-Modelle
+    ports:
+      - "80:8000"
+      - "8000:8000"
+
+volumes:
+  qdrant_storage:
+  models:

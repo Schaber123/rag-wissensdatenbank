@@ -1,8 +1,14 @@
-# RAG / Wissens-Chat (Tech-IT Consulting)
+# RAG Wissensdatenbank (Tech-IT Consulting)
+
+**V1.0** · Stand: 2026-06-23
 
 Interner Wissens-Chat: stellt Fragen zu Dokumenten und beantwortet sie ausschließlich
 aus den hinterlegten Quellen (Retrieval-Augmented Generation). Mehrere LLM-Engines
 wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
+
+**Dokumentation:** [📘 Handbuch (PDF)](docs/RAG-Wissensdatenbank-Handbuch-V1.0.pdf) · [Installation](INSTALL.md) · [Bedienungsanleitung](BEDIENUNGSANLEITUNG.md) · [Changelog](CHANGELOG.md)
+Das gebrandete PDF-Handbuch wird mit [`docs/build-handbuch.py`](docs/build-handbuch.py) aus den Markdown-Quellen erzeugt.
+Version: [`backend/version.py`](backend/version.py) (Single Source of Truth) · `GET /api/version`.
 
 > Diese Doku enthält **keine Secrets**. API-Keys und das SMB-Passwort liegen ausschließlich
 > in `config.json` / `.env` auf dem Server (siehe „Sicherheit").
@@ -60,7 +66,7 @@ wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 - [ ] **Kein TLS:** Passwörter laufen über HTTP (im Netbird/WireGuard-VPN verschlüsselt, im LAN Klartext).
       Später Reverse-Proxy mit TLS davor, dann `COOKIE_SECURE=1` in der `.env`.
 
-**Wie wir weitermachen:** Lokale Arbeitskopie + Git-Historie unter `rag-app/`. Deploy = `scp` (Reload) bzw.
+**Wie wir weitermachen:** Lokale Arbeitskopie + Git-Historie unter `rag-wissensdatenbank/`. Deploy = `scp` (Reload) bzw.
 `docker compose build backend && up -d` bei Dockerfile/requirements-Änderungen. Details unten.
 
 ---
@@ -71,7 +77,7 @@ wählbar (lokal auf dem Mac via Ollama, OpenAI, Claude, Gemini).
 |---|---|
 | **Produktivserver** | `vm-rag` — **192.168.1.211** (Debian 13), Zugang: `ssh root@192.168.1.211` |
 | **App-Verzeichnis (Server)** | `/opt/rag` (kein Git-Repo) |
-| **Lokale Arbeitskopie** | `rag-app/` im Workspace (Git-Repo, Sicherungs-/Versionsstand) |
+| **Lokale Arbeitskopie** | `rag-wissensdatenbank/` im Workspace (Git-Repo, Sicherungs-/Versionsstand) |
 | **Web-App** | `http://192.168.1.211` (Port 80) bzw. `:8000`. Im Mesh: vm-rag Netbird-IP `100.94.149.70` |
 | **Netbird** | vm-rag: `vm-rag.netbird.selfhosted` / `100.94.149.70` · Management `netbird.techit-consulting.de` |
 
@@ -83,9 +89,9 @@ Ein Rebuild ist nur bei Änderung von `requirements.txt` nötig.
 
 ```bash
 # Backend deployen
-scp rag-app/backend/main.py root@192.168.1.211:/opt/rag/backend/main.py
+scp rag-wissensdatenbank/backend/main.py root@192.168.1.211:/opt/rag/backend/main.py
 # Frontend deployen
-scp rag-app/backend/static/* root@192.168.1.211:/opt/rag/backend/static/
+scp rag-wissensdatenbank/backend/static/* root@192.168.1.211:/opt/rag/backend/static/
 # Reload prüfen
 ssh root@192.168.1.211 'docker logs --since 20s rag-backend | tail; curl -s localhost:8000/api/status'
 ```
@@ -130,7 +136,7 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
 - **Chunking:** 1000 Zeichen, 150 Überlappung. PDFs werden **seitenweise** gechunkt (`read_pages`), damit jeder
   Chunk eine `page`-Angabe bekommt (Quelle springt per `#page=N` an die Stelle). Andere Formate: `page=None`.
 - **Unterstützte Dateitypen** (`EXTS` / `read_text_bytes`):
-  PDF, Word `.docx`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`, CSV, Text `.txt`/`.md`,
+  PDF, Word `.docx`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`, CSV, HTML `.html`/`.htm`, Text `.txt`/`.md`,
   Bilder `.png/.jpg/.jpeg/.tif/.tiff/.bmp/.gif`.
   - **OCR (Tesseract, `deu+eng`):** Bilder werden per OCR ausgelesen; bei PDFs greift OCR als **Fallback**,
     wenn die normale Textextraktion < 50 Zeichen liefert (= vermutlich gescannt). Normale Text-PDFs bleiben schnell.

@@ -1,4 +1,5 @@
 import os, io, json, uuid, urllib.request, threading, mimetypes, math, re, time
+from html.parser import HTMLParser
 from urllib.parse import quote
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, Form, Depends, Request
@@ -11,6 +12,8 @@ from qdrant_client.models import (Distance, VectorParams, PointStruct, Filter, F
                                   MatchValue, MatchAny, SparseVector, SparseVectorParams, Modifier,
                                   Prefetch, FusionQuery, Fusion)
 import auth
+import license as license_mod
+from version import __version__ as APP_VERSION, APP_NAME
 
 QDRANT    = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 COLL      = os.environ.get("COLLECTION", "rag_hybrid")
@@ -23,7 +26,7 @@ RERANK_FALLBACKS = ["jinaai/jina-reranker-v2-base-multilingual", "BAAI/bge-reran
                     "Xenova/ms-marco-MiniLM-L-12-v2", "Xenova/ms-marco-MiniLM-L-6-v2"]
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/srv/config.json")
 IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif")
-EXTS = (".md", ".txt", ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx") + IMG_EXTS
+EXTS = (".md", ".txt", ".html", ".htm", ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".pptx") + IMG_EXTS
 OCR_LANG = os.environ.get("OCR_LANG", "deu+eng")
 
 DEFAULTS = {
@@ -39,6 +42,7 @@ DEFAULTS = {
     },
     "sources": {"smb": {"enabled": False, "host": "192.168.1.5", "share": "", "path": "", "username": "", "password": ""}},
     "branding": {"logo": "logo.png", "logo_height": 34},
+    "license": {"key": "", "trial_start": ""},
 }
 ENV_KEYS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GOOGLE_API_KEY"}
 LABELS   = {"local": "Lokal · Mac", "claude": "Claude (Anthropic)", "openai": "ChatGPT (OpenAI)", "gemini": "Google Gemini"}
@@ -76,6 +80,25 @@ def load_config():
 def save_config(cfg):
     with _lock:
         with open(CONFIG_PATH, "w") as f: json.dump(cfg, f, indent=2, ensure_ascii=False)
+from datetime import date as _date
+def license_status():
+    """Liest den Lizenz-Status; setzt beim allerersten Aufruf das Trial-Startdatum dauerhaft."""
+    raw = load_raw()
+    lic = raw.get("license", {}) or {}
+    if not lic.get("trial_start"):
+        lic["trial_start"] = _date.today().isoformat()
+        raw["license"] = lic
+        save_config(raw)
+    return license_mod.get_license_status(lic)
+
+def license_json(info):
+    return {"status": info.status, "valid": info.valid, "locked": info.locked,
+            "expiry": info.expiry_date.isoformat() if info.expiry_date else "",
+            "license_type": info.license_type,
+            "trial_days_remaining": info.trial_days_remaining,
+            "grace_days_remaining": info.grace_days_remaining,
+            "error": info.error}
+
 def engine_key(cfg, e): return cfg["engines"][e].get("api_key") or os.environ.get(ENV_KEYS.get(e, ""), "")
 def engine_available(cfg, e):
     en = cfg["engines"][e]
@@ -276,6 +299,7 @@ def read_text_bytes(name, data):
     ext = ("." + name.lower().rsplit(".", 1)[-1]) if "." in name else ""
     try:
         if ext in (".md", ".txt"): return data.decode("utf-8", "ignore")
+        if ext in (".html", ".htm"): return html_to_text(data.decode("utf-8", "ignore"))
         if ext == ".pdf":
             from pypdf import PdfReader
             txt = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages)
@@ -334,6 +358,56 @@ def read_text_bytes(name, data):
             except Exception as ex: print(f"[OCR-Warn] {name}: {ex}")
     except Exception as ex: print(f"[Warn] {name}: {ex}")
     return ""
+
+class _HTMLTextParser(HTMLParser):
+    BLOCK_TAGS = {
+        "address", "article", "aside", "blockquote", "br", "caption", "dd", "div", "dl", "dt",
+        "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+        "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "td", "tfoot",
+        "th", "thead", "tr", "ul",
+    }
+    SKIP_TAGS = {"script", "style", "noscript", "template", "svg"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        if tag in self.BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in self.SKIP_TAGS and self._skip_depth:
+            self._skip_depth -= 1
+            return
+        if tag in self.BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if self._skip_depth:
+            return
+        text = re.sub(r"\s+", " ", data).strip()
+        if text:
+            self.parts.append(text)
+
+    def text(self):
+        text = " ".join(self.parts)
+        text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        return text.strip()
+
+def html_to_text(html):
+    parser = _HTMLTextParser()
+    parser.feed(html)
+    parser.close()
+    return parser.text()
 
 def chunk(text, size=1000, overlap=150):
     text = text.strip(); out, i = [], 0
@@ -596,6 +670,8 @@ class ConfigIn(BaseModel):
     engines: Optional[dict] = None
     sources: Optional[dict] = None
     branding: Optional[dict] = None
+class LicenseIn(BaseModel):
+    key: str
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -649,6 +725,8 @@ def ollama_models(url: str = "", user: dict = Depends(auth.require_admin)):
 
 @app.post("/api/ask")
 def ask(r: AskReq, user: dict = Depends(auth.require_user)):
+    if license_status().locked:
+        return JSONResponse({"error": "Lizenz erforderlich. Bitte einen gueltigen Lizenzschluessel in den Einstellungen hinterlegen."}, status_code=402)
     cfg = load_config(); e = r.engine or cfg["default_engine"]
     if e not in GENERATORS or not engine_available(cfg, e):
         return JSONResponse({"error": f"Engine '{e}' ist nicht verfuegbar (in Einstellungen aktivieren / Schluessel hinterlegen)."}, status_code=400)
@@ -661,6 +739,10 @@ def ask(r: AskReq, user: dict = Depends(auth.require_user)):
 
 @app.post("/api/ask/stream")
 def ask_stream(r: AskReq, user: dict = Depends(auth.require_user)):
+    if license_status().locked:
+        def lerr():
+            yield sse("error", {"error": "Lizenz erforderlich. Bitte einen gueltigen Lizenzschluessel in den Einstellungen hinterlegen."})
+        return StreamingResponse(lerr(), media_type="text/event-stream")
     cfg = load_config(); e = r.engine or cfg["default_engine"]
     if e not in STREAMERS or not engine_available(cfg, e):
         def err():
@@ -729,7 +811,9 @@ def set_config(c: ConfigIn, user: dict = Depends(auth.require_admin)):
 @app.get("/api/status")
 def api_status(user: dict = Depends(auth.require_user)):
     with _state_lock: st = dict(STATE)
-    st["indexed_chunks"] = indexed_count(); return st
+    st["indexed_chunks"] = indexed_count()
+    st["license"] = license_json(license_status())
+    return st
 
 @app.post("/api/ingest")
 def api_ingest(full: bool = False, user: dict = Depends(auth.require_admin)):
@@ -844,11 +928,16 @@ if os.environ.get("RERANK_WARMUP", "0") == "1":
 # ===================== Branding (Logo) =====================
 LOGO_EXTS = ("png", "jpg", "jpeg", "svg", "webp", "gif")
 
+@app.get("/api/version")
+def get_version():
+    return {"name": APP_NAME, "version": APP_VERSION}
+
 @app.get("/api/branding")
 def get_branding():
     # Oeffentlich: auch die Login-Seite braucht das Logo, bevor man angemeldet ist.
     b = load_raw().get("branding") or DEFAULTS["branding"]
-    return {"logo": b.get("logo", "logo.png"), "logo_height": int(b.get("logo_height", 34))}
+    return {"logo": b.get("logo", "logo.png"), "logo_height": int(b.get("logo_height", 34)),
+            "version": APP_VERSION, "name": APP_NAME}
 
 @app.post("/api/branding/logo")
 async def set_branding_logo(file: UploadFile = File(...), user: dict = Depends(auth.require_admin)):
@@ -864,6 +953,67 @@ async def set_branding_logo(file: UploadFile = File(...), user: dict = Depends(a
     cfg = load_raw(); cfg.setdefault("branding", _clone(DEFAULTS["branding"]))["logo"] = fn
     save_config(cfg)
     return {"ok": True, "logo": fn}
+
+# ===================== Lizenz =====================
+@app.get("/api/license")
+def get_license(user: dict = Depends(auth.require_user)):
+    raw = load_raw(); lic = raw.get("license", {}) or {}
+    out = license_json(license_status())
+    out["has_key"] = bool((lic.get("key") or "").strip())
+    return out
+
+@app.post("/api/license")
+def set_license(r: LicenseIn, user: dict = Depends(auth.require_admin)):
+    key = (r.key or "").strip().upper()
+    info = license_mod.decode_license(key) if key else None
+    if key and info.status == "invalid":
+        return JSONResponse({"error": info.error or "Ungueltiger Lizenzschluessel."}, status_code=400)
+    raw = load_raw()
+    lic = raw.get("license", {}) or {}
+    lic["key"] = key
+    if not lic.get("trial_start"):
+        lic["trial_start"] = _date.today().isoformat()
+    raw["license"] = lic
+    save_config(raw)
+    out = license_json(license_status()); out["has_key"] = bool(key)
+    return out
+
+# ===================== Sprache zu Text (lokales Whisper) =====================
+# Wird nur fuer die lokale Engine genutzt; Cloud-Engines transkribieren im Browser.
+_whisper_model = None
+_whisper_lock = threading.Lock()
+def get_whisper():
+    global _whisper_model
+    if _whisper_model is None:
+        with _whisper_lock:
+            if _whisper_model is None:
+                from faster_whisper import WhisperModel
+                size = os.environ.get("WHISPER_MODEL", "small")
+                _whisper_model = WhisperModel(size, device="cpu", compute_type="int8",
+                                              download_root="/models/whisper")
+    return _whisper_model
+
+@app.post("/api/transcribe")
+async def transcribe(audio: UploadFile = File(...), user: dict = Depends(auth.require_user)):
+    import tempfile
+    data = await audio.read()
+    if not data:
+        return JSONResponse({"error": "Leere Audiodatei."}, status_code=400)
+    if len(data) > 25 * 1024 * 1024:
+        return JSONResponse({"error": "Audio zu gross (max. 25 MB)."}, status_code=400)
+    ext = os.path.splitext(audio.filename or "")[1] or ".webm"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as f:
+        f.write(data); path = f.name
+    try:
+        model = get_whisper()
+        segments, _info = model.transcribe(path, language="de", vad_filter=True)
+        text = "".join(s.text for s in segments).strip()
+        return {"text": text}
+    except Exception as e:
+        return JSONResponse({"error": f"Transkription fehlgeschlagen: {e}"}, status_code=500)
+    finally:
+        try: os.remove(path)
+        except OSError: pass
 
 # ===================== Authentifizierung & Konto =====================
 auth.bootstrap_admin()

@@ -6,7 +6,8 @@
   <title>Tech-IT · Einstellungen</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260622-7">
+  <script src="theme.js?v=20260622-6"></script>
 </head>
 <body>
   <header class="topbar">
@@ -63,7 +64,7 @@
       <section class="card">
         <h2>Dokumente hochladen</h2>
         <p class="note">Dateien hierher ziehen &ndash; sie werden auf den QNAP geschrieben und sofort indiziert.<br>
-          Unterst&uuml;tzt: PDF, Word (.docx), Excel (.xlsx/.xls), PowerPoint (.pptx), CSV, Text (.txt/.md) sowie Bilder
+          Unterst&uuml;tzt: PDF, Word (.docx), Excel (.xlsx/.xls), PowerPoint (.pptx), CSV, HTML (.html/.htm), Text (.txt/.md) sowie Bilder
           (.png/.jpg/.tiff). Gescannte PDFs und Bilder werden per <b>OCR</b> (Texterkennung, Deutsch/Englisch) ausgelesen.</p>
         <div class="row" id="upload-folder-row">
           <label for="upload_folder">Zielordner</label>
@@ -73,7 +74,7 @@
         <div id="dropzone" class="dropzone">
           <span>Dateien hierher ziehen oder <b>klicken zum Ausw&auml;hlen</b></span>
           <input type="file" id="fileinput" multiple
-                 accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.gif" hidden>
+                 accept=".pdf,.docx,.xlsx,.xls,.csv,.pptx,.html,.htm,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.gif" hidden>
         </div>
         <div id="upload-status" class="status"></div>
         <h3 class="sub">Indizierte Dokumente <span id="doc-count" class="muted"></span></h3>
@@ -116,6 +117,14 @@
         <p class="note">Mehrsprachiges Modell empfohlen (Standard). Wird beim ersten Einsatz automatisch geladen.</p>
       </section>
 
+      <section class="card">
+        <div class="card-head"><h2>Lizenz</h2><span id="lic_badge" class="status"></span></div>
+        <div class="row"><label for="lic_key">Lizenzschl&uuml;ssel</label>
+          <input id="lic_key" type="text" placeholder="RAGW-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off"></div>
+        <p id="lic_status" class="note"></p>
+        <div class="actions"><button id="lic_save" type="button">Lizenz speichern</button></div>
+      </section>
+
       <section class="card" id="branding-card">
         <h2>Logo</h2>
         <p class="note">Das Logo oben links austauschen und in der Gr&ouml;&szlig;e anpassen. Wirkt auf alle Seiten (Chat, Login, Einstellungen).</p>
@@ -123,7 +132,7 @@
         <div class="row"><label for="logo_file">Neues Logo (PNG, JPG, SVG, WebP &ndash; max. 2 MB)</label>
           <input id="logo_file" type="file" accept=".png,.jpg,.jpeg,.svg,.webp,.gif"></div>
         <div class="row"><label for="logo_height">Gr&ouml;&szlig;e: <span id="logo_h_val"></span>&nbsp;px</label>
-          <input id="logo_height" type="range" min="20" max="80" step="1"></div>
+          <input id="logo_height" type="range" min="20" max="150" step="1"></div>
         <div class="actions"><button id="branding_save" type="button">Logo speichern</button>
           <span id="branding_status" class="status"></span></div>
       </section>
@@ -173,10 +182,10 @@
   </main>
 
   <footer class="footer">
-    &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
+    &copy; <span id="year"></span> Tech-IT Consulting &middot; Interne Wissensdatenbank &middot; Daten bleiben lokal &middot; <span class="appver"></span>
   </footer>
-  <script src="branding.js"></script>
+  <script src="branding.js?v=20260623-2"></script>
   <script src="guard.js"></script>
-  <script src="settings.js"></script>
+  <script src="settings.js?v=20260622-7"></script>
 </body>
 </html>

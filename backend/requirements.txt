@@ -15,6 +15,7 @@ pymupdf
 pytesseract
 Pillow
 smbprotocol
+faster-whisper
 bcrypt
 pyotp
 qrcode

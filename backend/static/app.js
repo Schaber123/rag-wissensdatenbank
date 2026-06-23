@@ -324,13 +324,120 @@ else document.addEventListener("me-ready", () => startTabs(), { once: true });
     }
     return banner;
   }
+  let licBanner;
+  function ensureLic(){
+    if (!licBanner){
+      licBanner = document.createElement("div");
+      licBanner.className = "idx-banner lic-banner";
+      licBanner.style.display = "none";
+      const hdr = document.querySelector("header.topbar");
+      hdr.insertAdjacentElement("afterend", licBanner);
+    }
+    return licBanner;
+  }
+  function licText(l){
+    if (!l || l.status === "valid") return "";
+    if (l.locked) return "⛔ Lizenz erforderlich – der Chat ist gesperrt. Bitte einen gültigen Lizenzschlüssel in den Einstellungen hinterlegen.";
+    if (l.status === "trial") return "Testphase: noch " + l.trial_days_remaining + " Tage. Lizenz in den Einstellungen hinterlegen.";
+    return "⚠️ " + (l.error || "Lizenzproblem") + (l.grace_days_remaining ? " Kulanzzeit: noch " + l.grace_days_remaining + " Tage." : "");
+  }
   async function poll(){
     try{
       const s = await fetch("/api/status").then(r => r.json());
       const b = ensure();
       b.textContent = "⏳ Indexierung läuft… " + (s.detail || "");
       b.style.display = s.indexing ? "block" : "none";
+      const lt = licText(s.license);
+      const lb = ensureLic();
+      lb.textContent = lt;
+      lb.style.display = lt ? "block" : "none";
+      lb.classList.toggle("locked", !!(s.license && s.license.locked));
     }catch(e){}
   }
   setInterval(poll, 3000); poll();
+})();
+
+// --- Spracheingabe (Mikrofon) ---
+// Lokale Engine -> Audio an /api/transcribe (Whisper laeuft auf dem Server, bleibt lokal).
+// Cloud-Engine  -> Web Speech API im Browser (Frage verlaesst ohnehin das Haus).
+(function(){
+  const micBtn = document.getElementById("mic");
+  const qInput = document.getElementById("q");
+  const engSel = document.getElementById("engine");
+  if (!micBtn) return;
+
+  let recording = false, webspeech = null, mediarec = null;
+
+  function ui(state){            // "idle" | "rec" | "busy"
+    micBtn.classList.toggle("recording", state === "rec");
+    micBtn.classList.toggle("busy", state === "busy");
+    micBtn.disabled = state === "busy";
+    micBtn.title = state === "rec" ? "Aufnahme stoppen"
+                 : state === "busy" ? "Wird transkribiert…" : "Spracheingabe";
+  }
+  function appendText(t){
+    if (!t) return;
+    qInput.value = (qInput.value ? qInput.value.trim() + " " : "") + t;
+    qInput.focus();
+  }
+  function reset(){ recording = false; webspeech = null; mediarec = null; ui("idle"); }
+
+  function isLocalEngine(){ return (engSel && engSel.value || "local") === "local"; }
+
+  // ----- Cloud: Web Speech API -----
+  function startWebSpeech(){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR){ alert("Die Browser-Spracheingabe wird hier nicht unterstuetzt. Tipp: Chrome/Edge/Safari verwenden, oder die lokale Engine waehlen."); return; }
+    const rec = new SR();
+    rec.lang = "de-DE"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
+    const base = qInput.value ? qInput.value.trim() + " " : "";
+    rec.onresult = e => {
+      let txt = "";
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+      qInput.value = base + txt;
+    };
+    rec.onerror = e => { if (e.error !== "aborted") alert("Spracheingabe fehlgeschlagen: " + e.error); reset(); };
+    rec.onend = () => reset();
+    webspeech = rec; recording = true; ui("rec");
+    try { rec.start(); } catch(e){ reset(); }
+  }
+
+  // ----- Lokal: MediaRecorder -> Whisper -----
+  async function startLocal(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      alert("Mikrofonzugriff nicht moeglich. Spracheingabe benoetigt eine sichere Verbindung (HTTPS) oder localhost.");
+      return;
+    }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch(e){ alert("Kein Mikrofonzugriff: " + (e.message || e.name)); return; }
+    const mr = new MediaRecorder(stream);
+    const chunks = [];
+    mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    mr.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      ui("busy");
+      try {
+        const blob = new Blob(chunks, { type: mr.mimeType || "audio/webm" });
+        const fd = new FormData(); fd.append("audio", blob, "aufnahme.webm");
+        const r = await fetch("/api/transcribe", { method: "POST", body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.text) appendText(d.text);
+        else alert(d.error || "Transkription fehlgeschlagen.");
+      } catch(e){ alert("Transkription fehlgeschlagen: " + e.message); }
+      finally { reset(); }
+    };
+    mediarec = mr; recording = true; ui("rec");
+    mr.start();
+  }
+
+  function stop(){
+    if (webspeech){ try { webspeech.stop(); } catch(e){} }
+    if (mediarec && mediarec.state !== "inactive"){ try { mediarec.stop(); } catch(e){} }
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (recording){ stop(); return; }
+    if (isLocalEngine()) startLocal(); else startWebSpeech();
+  });
 })();

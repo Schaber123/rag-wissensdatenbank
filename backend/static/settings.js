@@ -181,6 +181,10 @@ async function runIngest(full){
       $("ingest").disabled = false; $("ingest-full").disabled = false; return;
     }
     st.textContent = full ? "⏳ Voll-Neuaufbau gestartet…" : "⏳ Abgleich gestartet…";
+    // Optimistisch merken, dass eine Indexierung laeuft: ein reiner Lösch-Abgleich ist
+    // schneller fertig als das 3-Sek-Polling, sonst verpasst pollStatus das Ende und die
+    // Ergebnis-Zusammenfassung wird nie angezeigt (bleibt auf „gestartet…" haengen).
+    wasIndexing = true;
     // Fortschritt & Ergebnis zeigt ab jetzt pollStatus (Buttons bleiben bis Ende gesperrt)
   }catch(e){
     st.textContent = "⚠️ " + e.message;
@@ -333,6 +337,46 @@ if ($("branding_save")) $("branding_save").addEventListener("click", async () =>
 });
 
 // --- Init: Rechte des angemeldeten Nutzers anwenden ---
+// --- Lizenz ---
+function renderLicense(d){
+  const badge = $("lic_badge"), note = $("lic_status");
+  if (!badge) return;
+  const map = {
+    valid:        ["✓ Lizenziert", "ok"],
+    trial:        ["Testphase", "warn"],
+    trial_expired:["Testphase abgelaufen", "warn"],
+    expired:      ["Abgelaufen", "warn"],
+    invalid:      ["Ungültig", "warn"],
+    no_key:       ["Kein Schlüssel", "warn"],
+  };
+  const [txt, cls] = map[d.status] || ["—", ""];
+  badge.textContent = txt; badge.className = "status " + cls;
+  let info = "";
+  if (d.status === "valid"){
+    info = d.license_type === 1 ? "Dauerlizenz (lifetime)." : "Gültig bis " + (d.expiry || "—") + ".";
+  } else if (d.status === "trial"){
+    info = "Noch " + d.trial_days_remaining + " Tage Testzeitraum.";
+  } else if (d.locked){
+    info = (d.error || "Gesperrt.") + " Der Chat ist gesperrt, bis ein gültiger Schlüssel hinterlegt ist.";
+  } else {
+    info = (d.error || "") + (d.grace_days_remaining ? " Kulanzzeit: noch " + d.grace_days_remaining + " Tage." : "");
+  }
+  note.textContent = info.trim();
+}
+async function loadLicense(){
+  try{ const d = await fetch("/api/license").then(r=>r.json()); renderLicense(d); }catch(e){}
+}
+if ($("lic_save")) $("lic_save").addEventListener("click", async () => {
+  const note = $("lic_status"); note.textContent = "Prüfe…";
+  try{
+    const r = await fetch("/api/license", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ key: $("lic_key").value })});
+    const d = await r.json();
+    if (!r.ok){ note.textContent = d.error || "Fehler beim Speichern."; return; }
+    renderLicense(d);
+  }catch(e){ note.textContent = "Fehler: " + e.message; }
+});
+
 async function init(){
   let me;
   try{ const r = await fetch("/api/me"); if (!r.ok){ location.href="login.html"; return; } me = await r.json(); }
@@ -344,6 +388,7 @@ async function init(){
   if (me.admin){
     loadConfig();
     loadBranding();
+    loadLicense();
   } else {
     // Admin-Bereiche ausblenden, Standard-Tab auf "Datenquelle & Dokumente"
     document.querySelectorAll(".tab[data-admin]").forEach(t => t.style.display = "none");

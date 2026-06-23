@@ -58,7 +58,7 @@ function userRow(u){
     </div>
     <div class="grid2">
       <div class="row"><label>Anzeigename</label><input class="u_label" type="text" value="${u.label||""}"></div>
-      <div class="row"><label class="switch"><input class="u_admin" type="checkbox" ${u.admin?"checked":""}><span>Administrator</span></label></div>
+      <div class="row admincheck-row"><label class="switch"><input class="u_admin" type="checkbox" ${u.admin?"checked":""}><span>Administrator</span></label></div>
     </div>
     <div class="row"><label>Gruppen</label><div class="u_groups checkbox-grid"></div></div>
     <div class="source-actions">

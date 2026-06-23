@@ -3,16 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tech-IT · Wissens-Chat</title>
+  <title>Tech-IT · Wissensdatenbank</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=20260622-7">
+  <script src="theme.js?v=20260622-6"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <img src="logo.png" alt="Tech-IT Consulting" class="logo">
-      <span class="brand-text">Wissens-Chat</span>
+      <span class="brand-text">Wissensdatenbank</span>
     </div>
     <div class="topbar-right">
       <button id="newchat" type="button" class="newchat" title="Neuer Chat in neuem Tab">&#10010; Neuer Chat</button>
@@ -40,15 +41,16 @@
 
   <form id="composer" class="composer">
     <input id="q" type="text" placeholder="Frage zu deinen Dokumenten&hellip;" autocomplete="off" required>
+    <button id="mic" type="button" class="mic" aria-label="Spracheingabe" title="Spracheingabe">&#127908;</button>
     <button id="send" type="submit" aria-label="Senden">Senden</button>
   </form>
 
   <footer class="footer">
-    &copy; <span id="year"></span> Tech-IT Consulting &middot; Interner Wissens-Chat &middot; Daten bleiben lokal
+    &copy; <span id="year"></span> Tech-IT Consulting &middot; Interne Wissensdatenbank &middot; Daten bleiben lokal &middot; <span class="appver"></span>
   </footer>
 
-  <script src="branding.js"></script>
+  <script src="branding.js?v=20260623-2"></script>
   <script src="guard.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260622-7"></script>
 </body>
 </html>
