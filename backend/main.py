@@ -432,7 +432,7 @@ def index_file(rel, data, sig=None):
     items = [(ch, pg) for pg, text in read_pages(rel, data) for ch in chunk(text)]
     if not items: return 0
     texts = [t for t, _ in items]
-    tenant = rel.split("/")[0] if "/" in rel else "qnap"
+    tenant = rel.split("/")[0] if "/" in rel else "smb"
     prefixes = path_prefixes(rel)
     pts = [PointStruct(id=str(uuid.uuid4()), vector={"dense": dv, "bm25": sv},
                        payload={"text": t, "source": rel, "page": pg, "tenant": tenant,
@@ -489,7 +489,7 @@ def ingest_smb(full=False):
     set_indexing(True, "Dateiliste wird gelesen…")
     current = {}  # rel -> sig
     for dp, dirs, files in smbclient.walk(base):
-        # QNAP-System-/Versteckordner ueberspringen (@Recycle, @Recently-Snapshot, .…)
+        # System-/Versteckordner ueberspringen (@Recycle, @Recently-Snapshot, .…)
         dirs[:] = [d for d in dirs if not d.startswith("@") and not d.startswith(".")]
         for fn in files:
             if fn.startswith("."): continue
@@ -553,7 +553,7 @@ def list_documents(user=None):
 
 def smb_folders():
     """Tatsaechliche Ordner (rekursiv) auf dem SMB-Share, relativ zur Share-Wurzel,
-    ohne QNAP-System-/Versteckordner. Fuer Ordnerauswahl auch VOR dem Indexieren."""
+    ohne System-/Versteckordner. Fuer Ordnerauswahl auch VOR dem Indexieren."""
     cfg = load_config(); s = cfg["sources"]["smb"]
     out = set()
     smbclient, root, base, sub = smb_connect(s)
@@ -905,7 +905,7 @@ async def api_upload(files: List[UploadFile] = File(...), folder: str = Form("")
         try:
             with smbclient.open_file(dest, mode="wb") as fd: fd.write(data)
         except Exception as ex:
-            results.append({"file": name, "error": f"Schreiben auf QNAP fehlgeschlagen: {ex}"}); continue
+            results.append({"file": name, "error": f"Schreiben auf SMB-Freigabe fehlgeschlagen: {ex}"}); continue
         rel = (folder + "/" if folder else "") + name
         try: sig = file_sig(smbclient.stat(dest))
         except Exception: sig = None

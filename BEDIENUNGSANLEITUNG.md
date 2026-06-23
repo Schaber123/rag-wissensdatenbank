@@ -60,10 +60,10 @@ Die Wahl wird pro Browser gespeichert.
   lässt sich ein Modell auswählen.
 
 ### 5.2 Datenquelle & Dokumente
-- **QNAP-Verbindung (SMB):** Host, Freigabe, Unterordner, Benutzer/Passwort. Dateien bleiben auf dem QNAP, indiziert werden nur Text-Ausschnitte.
+- **SMB-Freigabe (Netzwerklaufwerk):** Host, Freigabe, Unterordner, Benutzer/Passwort. Funktioniert mit jeder SMB-Freigabe (Windows-Dateiserver, NAS, Samba). Dateien bleiben auf der Freigabe, indiziert werden nur Text-Ausschnitte.
 - **Abgleichen (nur Änderungen):** liest neue/geänderte Dateien ein, entfernt gelöschte – schnell.
 - **Voll-Neuaufbau:** verwirft den Index und liest alles neu (nach größeren Umstellungen).
-- **Hochladen:** Dateien per Drag & Drop in die Dropzone; sie werden auf den QNAP geschrieben und sofort indiziert.
+- **Hochladen:** Dateien per Drag & Drop in die Dropzone; sie werden auf die SMB-Freigabe geschrieben und sofort indiziert.
   Unterstützt PDF, Word, Excel, PowerPoint, CSV, HTML, Text und Bilder (mit OCR).
 
 ### 5.3 Allgemein *(Admin)*

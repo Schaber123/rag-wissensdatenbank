@@ -17,7 +17,7 @@ Erste offizielle Version.
 - **LLM-Engines**: Lokal (Ollama/Mac), OpenAI, Anthropic Claude, Google Gemini – pro Chat wählbar.
 - **Suche**: Hybrid (semantisch + BM25) mit Cross-Encoder-Reranking, Embedding `e5-large`.
 - **Dokumenttypen**: PDF, Word, Excel, PowerPoint, CSV, HTML, Text, Bilder – inkl. OCR (deu/eng) und seitengenauer PDF-Quellen.
-- **Quellen**: QNAP/SMB-Anbindung, inkrementelles + asynchrones Indexieren, Upload per Drag & Drop.
+- **Quellen**: SMB-Freigabe-Anbindung (Windows-Dateiserver, NAS, Samba), inkrementelles + asynchrones Indexieren, Upload per Drag & Drop.
 - **Chat**: Multi-Turn, SSE-Streaming, Markdown, anklickbare Quellen, mehrere Chat-Tabs.
 - **Benutzer**: Login (bcrypt), optional 2FA (TOTP), Gruppen mit Ordner-ACL.
 - **Spracheingabe** (Mikrofon): lokal via Whisper (lokale Engine) bzw. Web Speech API (Cloud-Engine).

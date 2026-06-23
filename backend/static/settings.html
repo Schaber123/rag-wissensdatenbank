@@ -42,10 +42,10 @@
     <section class="tabpane hidden" id="tab-docs">
       <section class="card" id="source-card">
         <div class="card-head">
-          <h2>QNAP-Verbindung (SMB)</h2>
+          <h2>SMB-Freigabe (Netzwerklaufwerk)</h2>
           <label class="switch"><input type="checkbox" id="smb_enabled"><span>aktiv</span></label>
         </div>
-        <p class="note">Die Dateien bleiben auf dem QNAP. Indiziert werden nur Text-Ausschnitte.</p>
+        <p class="note">Die Dateien bleiben auf der SMB-Freigabe. Indiziert werden nur Text-Ausschnitte.</p>
         <div class="grid2">
           <div class="row"><label>Host / IP</label><input id="smb_host" type="text" placeholder="192.168.1.5"></div>
           <div class="row"><label>Freigabe (Share-Name)</label><input id="smb_share" type="text" placeholder="Wissensdatenbank"></div>
@@ -63,7 +63,7 @@
 
       <section class="card">
         <h2>Dokumente hochladen</h2>
-        <p class="note">Dateien hierher ziehen &ndash; sie werden auf den QNAP geschrieben und sofort indiziert.<br>
+        <p class="note">Dateien hierher ziehen &ndash; sie werden auf die SMB-Freigabe geschrieben und sofort indiziert.<br>
           Unterst&uuml;tzt: PDF, Word (.docx), Excel (.xlsx/.xls), PowerPoint (.pptx), CSV, HTML (.html/.htm), Text (.txt/.md) sowie Bilder
           (.png/.jpg/.tiff). Gescannte PDFs und Bilder werden per <b>OCR</b> (Texterkennung, Deutsch/Englisch) ausgelesen.</p>
         <div class="row" id="upload-folder-row">

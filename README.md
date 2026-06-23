@@ -110,7 +110,7 @@ Browser ──HTTP──> rag-backend (FastAPI, Port 80/8000)
                           openai → OpenAI API
                           claude → Anthropic API
                           gemini → Google API
-Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner "Dokumente"
+Wissensquelle: SMB-Freigabe auf 192.168.1.5 / "Wissensdatenbank" / Unterordner "Dokumente"
 ```
 
 - **Docker-Compose:** `/opt/rag/docker-compose.yml` — Services `qdrant`, `backend`, optional `app` (Profil `tools`).
@@ -161,8 +161,8 @@ Wissensquelle: SMB-Share auf QNAP 192.168.1.5 / "Wissensdatenbank" / Unterordner
 | GET | `/api/status` | `{indexing, detail, indexed_chunks}` |
 | POST | `/api/ingest?full=<bool>` | SMB abgleichen — inkrementell (default) oder Voll-Neuaufbau |
 | GET | `/api/documents` | Indizierte Dokumente + Chunk-Anzahl |
-| GET | `/api/document?source=<rel>` | Datei vom QNAP abrufen/öffnen (PDF inline). Nur indizierte Quellen erlaubt (kein Path-Traversal) |
-| POST | `/api/upload` | Dateien hochladen → auf QNAP schreiben + indizieren |
+| GET | `/api/document?source=<rel>` | Datei von der SMB-Freigabe abrufen/öffnen (PDF inline). Nur indizierte Quellen erlaubt (kein Path-Traversal) |
+| POST | `/api/upload` | Dateien hochladen → auf SMB-Freigabe schreiben + indizieren |
 | GET | `/api/ollama/models?url=<url>` | Modelle eines Ollama-Servers auflisten (`/api/tags`) |
 
 ### Inkrementelles Indexieren
@@ -249,7 +249,7 @@ Wird über die Settings-UI bzw. `POST /api/config` gepflegt. Struktur (ohne Wert
 `sources.smb` (`enabled/host/share/path/username/password`).
 
 Stand 2026-06-21: `default_engine = openai`, `top_k = 4`, `hybrid = true`, `rerank = true`,
-`candidates = 20`, lokale Engine aktiv auf Netbird-IP, SMB aktiv (QNAP 192.168.1.5 / Wissensdatenbank / Dokumente).
+`candidates = 20`, lokale Engine aktiv auf Netbird-IP, SMB aktiv (192.168.1.5 / Wissensdatenbank / Dokumente).
 
 ---
 
@@ -348,6 +348,6 @@ mit Ordnerliste.
 curl -s -b cj.txt -X POST "http://localhost:8000/api/ingest?full=true"
 ```
 
-**Wichtig:** Nach dem Umbau auf department-spezifische Ordner auf dem QNAP (z. B. `Geschaeftsfuehrung/`,
+**Wichtig:** Nach dem Umbau auf department-spezifische Ordner auf der SMB-Freigabe (z. B. `Geschaeftsfuehrung/`,
 `Vertrieb/`, `Technik/`, `Versand/`) einmal **abgleichen/neu indizieren**, damit die Ordner in der
 Gruppen-Zuweisung (`/api/admin/folders`) auftauchen.

@@ -74,4 +74,4 @@ fragt nach der ausgefüllten `.env` und startet den Stack.
   Ohne lokales Ollama eine Cloud-Engine (OpenAI/Claude/Gemini) im Webinterface nutzen.
 - **Mikrofon/Spracheingabe:** funktioniert nur über **HTTPS** (sicherer Kontext) –
   also hinter einem TLS-Reverse-Proxy (z. B. Nginx Proxy Manager / Caddy) betreiben.
-- **QNAP/SMB:** optional, für den automatischen Dokumenten-Abgleich.
+- **SMB-Freigabe:** optional, für den automatischen Dokumenten-Abgleich (Windows-Dateiserver, NAS, Samba).
