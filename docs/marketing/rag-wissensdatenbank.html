@@ -40,6 +40,7 @@
       "priceCurrency": "EUR",
       "availability": "https://schema.org/InStock"
     },
+    "screenshot": "https://www.techit-consulting.de/assets/img/rag-wissensdatenbank-screenshot.png",
     "featureList": [
       "KI-Chat für interne Dokumente",
       "Quellenangaben und PDF-Seitenverweise",
@@ -200,6 +201,11 @@
       box-shadow: 0 34px 90px rgba(0,0,0,.46), 0 0 60px rgba(79,70,229,.16);
       overflow: hidden;
       text-align: left;
+    }
+    .rag-screenshot {
+      display: block;
+      width: 100%;
+      height: auto;
     }
     .mockup-top {
       display: flex;
@@ -630,35 +636,14 @@
       <span class="trust-chip"><i class="bi bi-file-earmark-richtext"></i> PDF, Office, Scans &amp; Bilder</span>
     </div>
 
-    <div class="rag-mockup" data-aos="fade-up" data-aos-delay="420">
-      <div class="mockup-top">
-        <div class="mockup-dots" aria-hidden="true">
-          <span class="mockup-dot"></span>
-          <span class="mockup-dot"></span>
-          <span class="mockup-dot"></span>
-        </div>
-        <span>Tech-IT Wissensdatenbank · Daten bleiben kontrollierbar</span>
-      </div>
-      <div class="mockup-body">
-        <div class="mockup-chat">
-          <div class="question-bubble">Welche Schritte gehoeren zum Kunden-Onboarding?</div>
-          <div class="answer-card">
-            <strong>Das Kunden-Onboarding besteht aus 5 Hauptschritten:</strong>
-            Erstgespräch, Bedarfsanalyse, Angebot, Einrichtung und Übergabe.
-            Für jeden Schritt gibt es eine kurze Checkliste und definierte Verantwortlichkeiten.
-            <br>
-            <span class="source-pill"><i class="bi bi-file-earmark-text"></i> Quelle: prozesse/onboarding-kunde.md</span>
-          </div>
-        </div>
-        <div class="mockup-side">
-          <div class="side-title">Gefundene Quellen</div>
-          <div class="doc-row"><i class="bi bi-file-earmark-pdf"></i><span>Onboarding-Kunde.pdf · S. 2</span></div>
-          <div class="doc-row"><i class="bi bi-file-earmark-word"></i><span>Projektvorlage.docx</span></div>
-          <div class="doc-row"><i class="bi bi-file-earmark-excel"></i><span>Kundenliste.xlsx</span></div>
-          <div class="doc-row"><i class="bi bi-image"></i><span>Scan-Vertrag.png · OCR</span></div>
-        </div>
-      </div>
-    </div>
+    <figure class="rag-mockup" data-aos="fade-up" data-aos-delay="420">
+      <img class="rag-screenshot"
+           src="assets/img/rag-wissensdatenbank-screenshot.png"
+           alt="Screenshot der Tech-IT RAG Wissensdatenbank mit Chat-Oberfläche, Quellen-Chat und lokaler Engine-Auswahl"
+           width="1205"
+           height="975"
+           loading="eager">
+    </figure>
   </div>
 </section>
 
