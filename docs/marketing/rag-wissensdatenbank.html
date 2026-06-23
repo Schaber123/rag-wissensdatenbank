@@ -6,13 +6,13 @@
   <script>if(localStorage.getItem('theme')==='light')document.documentElement.setAttribute('data-theme','light');</script>
   <link rel="icon" type="image/jpeg" href="assets/img/logo-icon.jpg">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RAG Wissensdatenbank für KMU | Tech-IT Consulting</title>
-  <meta name="description" content="Interne KI-Wissensdatenbank für KMU: Dokumente, PDFs, Word, Excel, Scans und Bilder durchsuchen, Antworten mit Quellen erhalten und Daten kontrolliert behalten.">
+  <title>KI-Wissensdatenbank für KMU | RAG & lokale Dokumentensuche</title>
+  <meta name="description" content="KI-Wissensdatenbank für KMU: PDFs, Word, Excel, Scans und Dateiserver per Chat durchsuchen. Antworten mit Quellen, lokal oder kontrolliert gehostet.">
 
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://www.techit-consulting.de/rag-wissensdatenbank.html">
-  <meta property="og:title" content="RAG Wissensdatenbank für KMU | Tech-IT Consulting">
-  <meta property="og:description" content="Frag deine Dokumente. Bekomm Antworten mit Quellen. Die interne KI-Wissensdatenbank für KMU.">
+  <meta property="og:title" content="KI-Wissensdatenbank für KMU | Tech-IT Consulting">
+  <meta property="og:description" content="Frag deine Dokumente. Bekomm Antworten mit Quellen. KI-Wissensdatenbank für KMU, lokal oder kontrolliert gehostet.">
   <meta property="og:image" content="https://www.techit-consulting.de/assets/img/og-default.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -152,12 +152,13 @@
       margin-bottom: 1.4rem;
     }
     .rag-hero-title {
-      font-size: clamp(2.35rem, 5.8vw, 4.6rem);
-      font-weight: 800;
-      line-height: 1.06;
+      max-width: 920px;
+      margin: 0 auto 1.25rem;
+      font-size: clamp(2rem, 4vw, 3.25rem);
+      font-weight: 700;
+      line-height: 1.15;
       letter-spacing: -.02em;
       color: var(--text);
-      margin-bottom: 1.25rem;
     }
     .rag-hero-sub {
       max-width: 760px;
@@ -427,6 +428,28 @@
       font-weight: 700;
       margin-bottom: 1rem;
     }
+    .license-options {
+      display: grid;
+      gap: .55rem;
+      margin-bottom: 1rem;
+    }
+    .license-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+      background: rgba(255,255,255,.035);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: .7rem .85rem;
+      color: var(--text-muted);
+      font-size: .86rem;
+    }
+    .license-option strong {
+      color: var(--text);
+      font-weight: 800;
+      white-space: nowrap;
+    }
     .package-card p {
       color: var(--text-muted);
       font-size: .92rem;
@@ -504,17 +527,19 @@
 
 <!-- Matomo -->
 <script>
-  var _paq = window._paq = window._paq || [];
-  _paq.push(['disableCookies']);
-  _paq.push(['trackPageView']);
-  _paq.push(['enableLinkTracking']);
-  (function() {
-    var u="//www.techit-consulting.de/matomo/";
-    _paq.push(['setTrackerUrl', u+'matomo.php']);
-    _paq.push(['setSiteId', '1']);
-    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
-    g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
-  })();
+  if (!["localhost", "127.0.0.1", "::1"].includes(location.hostname)) {
+    var _paq = window._paq = window._paq || [];
+    _paq.push(["disableCookies"]);
+    _paq.push(["trackPageView"]);
+    _paq.push(["enableLinkTracking"]);
+    (function() {
+      var u="//www.techit-consulting.de/matomo/";
+      _paq.push(["setTrackerUrl", u+"matomo.php"]);
+      _paq.push(["setSiteId", "1"]);
+      var d=document, g=d.createElement("script"), s=d.getElementsByTagName("script")[0];
+      g.async=true; g.src=u+"matomo.js"; s.parentNode.insertBefore(g,s);
+    })();
+  }
 </script>
 <!-- End Matomo Code -->
 
@@ -559,7 +584,7 @@
             <li><a class="dropdown-item active" href="rag-wissensdatenbank.html"><i class="bi bi-database-check me-2"></i>RAG Wissensdatenbank</a></li>
           </ul>
         </li>
-        <li class="nav-item"><a class="nav-link" href="über-mich.html">Über mich</a></li>
+        <li class="nav-item"><a class="nav-link" href="ueber-mich.html">Über mich</a></li>
         <li class="nav-item"><a class="nav-link" href="kontakt.html">Kontakt</a></li>
         <li class="nav-item ms-lg-2 mt-2 mt-lg-0">
           <a class="btn btn-primary btn-sm px-4 py-2" href="kontakt.html">Demo anfragen</a>
@@ -645,7 +670,7 @@
       <h2>Wissen ist da. Es wird nur nicht gefunden.</h2>
       <p>
         In vielen Betrieben liegen wichtige Informationen verteilt auf Dateiservern,
-        QNAP, SharePoint-Ordnern, PDFs, Excel-Listen und alten Projektordnern.
+        Netzwerklaufwerken, SharePoint-Ordnern, PDFs, Excel-Listen und alten Projektordnern.
         Die Dateien sind vorhanden. Aber wenn jemand eine konkrete Antwort braucht,
         beginnt die Suche.
       </p>
@@ -859,47 +884,40 @@
     <div class="section-head" data-aos="fade-up">
       <span class="section-tag-pill">Pakete &amp; Preise</span>
       <h2>Transparent starten. Danach sauber betreiben.</h2>
-      <p>Die RAG Wissensdatenbank ist kein anonymes Abo-Tool, sondern eine betreute Lösung für deine eigenen Daten. Deshalb besteht der Preis aus Einrichtung plus laufender Lizenz und Betreuung.</p>
+      <p>Die RAG Wissensdatenbank ist kein anonymes Abo-Tool, sondern eine installierte Lösung für deine eigenen Daten. Deshalb besteht der Preis aus einmaliger Einrichtung plus Jahreslizenz oder Lifetime-Lizenz.</p>
     </div>
-    <div class="row g-4">
-      <div class="col-lg-4" data-aos="fade-up" data-aos-delay="60">
-        <div class="package-card">
-          <div class="package-kicker">Pilot</div>
+    <div class="row g-4 justify-content-center">
+      <div class="col-lg-5" data-aos="fade-up" data-aos-delay="60">
+        <div class="package-card featured">
+          <div class="package-kicker">Klarer Einstieg</div>
           <h3>Starter</h3>
           <div class="package-price">ab 1.900 € <span>Einrichtung</span></div>
-          <div class="package-running"><i class="bi bi-arrow-repeat"></i> ab 199 €/Monat</div>
-          <p>Für den ersten produktiven Einstieg mit einem klaren Dokumentenbereich.</p>
+          <div class="license-options">
+            <div class="license-option"><span>Jahreslizenz</span><strong>ab 1.490 €/Jahr</strong></div>
+            <div class="license-option"><span>Lifetime-Lizenz</span><strong>ab 3.900 €</strong></div>
+          </div>
+          <p>Für den produktiven Einstieg mit einem klar abgegrenzten Dokumentenbereich und einem pragmatischen Rechtekonzept.</p>
           <ul>
             <li><i class="bi bi-check-circle-fill"></i><span>Installation und Grundkonfiguration</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>Eine zentrale Datenquelle</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>Basis-Rechtekonzept</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>Einweisung und Testfragen</span></li>
+            <li><i class="bi bi-check-circle-fill"></i><span>Eine zentrale Datenquelle, z. B. eine SMB-Freigabe oder ein Dateiserver</span></li>
+            <li><i class="bi bi-check-circle-fill"></i><span>Basis-Rechtekonzept mit Benutzern und Gruppen</span></li>
+            <li><i class="bi bi-check-circle-fill"></i><span>OCR für Scans und PDFs im Startbereich</span></li>
+            <li><i class="bi bi-check-circle-fill"></i><span>Einweisung und Testfragen aus deinem Alltag</span></li>
           </ul>
         </div>
       </div>
-      <div class="col-lg-4" data-aos="fade-up" data-aos-delay="120">
-        <div class="package-card featured">
-          <div class="package-kicker">Empfohlen</div>
-          <h3>Team</h3>
-          <div class="package-price">ab 3.900 € <span>Einrichtung</span></div>
-          <div class="package-running"><i class="bi bi-arrow-repeat"></i> ab 399 €/Monat</div>
-          <p>Für mehrere Abteilungen, Ordner und Benutzergruppen im Alltag.</p>
-          <ul>
-            <li><i class="bi bi-check-circle-fill"></i><span>Mehrere Ordner und Gruppenrechte</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>QNAP- oder Dateiserver-Anbindung</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>OCR für Scans und PDFs</span></li>
-            <li><i class="bi bi-check-circle-fill"></i><span>Begleitete Einführung im Team</span></li>
-          </ul>
-        </div>
-      </div>
-      <div class="col-lg-4" data-aos="fade-up" data-aos-delay="180">
+      <div class="col-lg-5" data-aos="fade-up" data-aos-delay="120">
         <div class="package-card">
           <div class="package-kicker">Maßgeschneidert</div>
           <h3>Individuell</h3>
           <div class="package-price">ab 7.500 € <span>Projekt</span></div>
-          <div class="package-running"><i class="bi bi-arrow-repeat"></i> Betreuung nach Bedarf</div>
-          <p>Für eigene Infrastruktur, lokale KI, Spezialworkflows oder Prozessanbindungen.</p>
+          <div class="license-options">
+            <div class="license-option"><span>Jahreslizenz</span><strong>auf Anfrage</strong></div>
+            <div class="license-option"><span>Lifetime-Lizenz</span><strong>auf Anfrage</strong></div>
+          </div>
+          <p>Für mehrere Datenquellen, eigene Infrastruktur, lokale KI, Spezialworkflows oder komplexere Rechte- und Prozessanforderungen.</p>
           <ul>
+            <li><i class="bi bi-check-circle-fill"></i><span>Mehrere Ordner, Abteilungen und Benutzergruppen</span></li>
             <li><i class="bi bi-check-circle-fill"></i><span>Lokale KI-Engine und Serverbetrieb</span></li>
             <li><i class="bi bi-check-circle-fill"></i><span>Spezial-Workflows und Anpassungen</span></li>
             <li><i class="bi bi-check-circle-fill"></i><span>Anbindung an bestehende Prozesse</span></li>
@@ -911,11 +929,12 @@
     <div class="row justify-content-center mt-4">
       <div class="col-lg-9">
         <div class="rag-card text-center" data-aos="fade-up">
-          <h3 style="font-size:1.05rem;margin-bottom:.5rem;">Was ist im monatlichen Preis enthalten?</h3>
+          <p style="color:#a5b4fc;font-size:.86rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;margin-bottom:.75rem;">Alle genannten Preise verstehen sich zzgl. gesetzlicher Umsatzsteuer.</p>
+          <h3 style="font-size:1.05rem;margin-bottom:.5rem;">Was ist in der Lizenz enthalten?</h3>
           <p>
-            Lizenz, Updates, technische Betreuung, kleinere Anpassungen und Betriebssicherheit.
-            KI-API-Kosten, Server-Hardware oder Hosting werden je nach Betriebsmodell separat kalkuliert.
-            Das Erstgespräch ist kostenlos.
+            Die Jahreslizenz enthält Nutzung, Updates und technischen Basissupport für 12 Monate.
+            Die Lifetime-Lizenz enthält die dauerhafte Nutzung der gekauften Version; Update- und Supportpakete können optional ergänzt werden.
+            KI-API-Kosten, Server-Hardware oder Hosting werden je nach Betriebsmodell separat kalkuliert. Das Erstgespräch ist kostenlos.
           </p>
         </div>
       </div>
@@ -984,7 +1003,7 @@
           <div class="accordion-item">
             <h2 class="accordion-header">
               <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq5">
-                Ersetzt das SharePoint, QNAP oder den Dateiserver?
+                Ersetzt das SharePoint oder den Dateiserver?
               </button>
             </h2>
             <div id="faq5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">

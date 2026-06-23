@@ -12,7 +12,7 @@
 
 **Kernversprechen:** Dein Firmenwissen wird endlich durchsuchbar. Nicht irgendwo in der Cloud, sondern kontrolliert in deiner eigenen Umgebung.
 
-**Zielgruppe:** Geschäftsführer, IT-Verantwortliche und Teams in KMU mit vielen internen Dokumenten, Anleitungen, PDFs, Excel-Dateien, Protokollen, Vorlagen oder QNAP/Dateiserver-Strukturen.
+**Zielgruppe:** Geschäftsführer, IT-Verantwortliche und Teams in KMU mit vielen internen Dokumenten, Anleitungen, PDFs, Excel-Dateien, Protokollen, Vorlagen oder Dateiserver-/Netzwerklaufwerk-Strukturen.
 
 ## Seitenziel
 
@@ -40,7 +40,7 @@ Möglicher Navigationsname: **RAG Wissensdatenbank**
 
 **Meta Description:** Interne KI-Wissensdatenbank für deine Dokumente: PDF, Word, Excel, PowerPoint, Bilder und Scans durchsuchen, Antworten mit Quellen erhalten und Daten lokal behalten.
 
-**Keywords intern:** KI Wissensdatenbank, RAG, Dokumente durchsuchen, lokale KI, KMU, QNAP, Dateiserver, interne Suche, KI Chat für Dokumente
+**Keywords intern:** KI Wissensdatenbank, RAG, Dokumente durchsuchen, lokale KI, KMU, SMB-Freigabe, Netzwerklaufwerk, Dateiserver, interne Suche, KI Chat für Dokumente
 
 ## Hero
 
@@ -64,7 +64,7 @@ Möglicher Navigationsname: **RAG Wissensdatenbank**
 
 **Headline:** Wissen ist da. Es wird nur nicht gefunden.
 
-**Copy:** In vielen Betrieben liegen wichtige Informationen verteilt auf Dateiservern, QNAP, SharePoint-Ordnern, alten PDFs, Excel-Listen, Bedienungsanleitungen oder Projektordnern. Die Dateien sind vorhanden — aber wenn jemand eine konkrete Antwort braucht, beginnt die Suche.
+**Copy:** In vielen Betrieben liegen wichtige Informationen verteilt auf Dateiservern, Netzwerklaufwerken, SharePoint-Ordnern, alten PDFs, Excel-Listen, Bedienungsanleitungen oder Projektordnern. Die Dateien sind vorhanden — aber wenn jemand eine konkrete Antwort braucht, beginnt die Suche.
 
 **Pain Cards:**
 
@@ -162,7 +162,7 @@ Kurze Einweisung, klare Regeln und ein pragmatischer Start mit echtem Nutzen.
 
 **Paketvorschlag 2: Team**
 - Mehrere Ordner und Benutzergruppen
-- QNAP/Dateiserver-Anbindung
+- SMB-Freigabe-/Dateiserver-Anbindung
 - OCR für Scans und PDFs
 - Anpassung der Suchqualität
 - Begleitete Einführung
@@ -190,7 +190,7 @@ PDF, Word, Excel, PowerPoint, CSV, HTML, Textdateien und Bilder. Scans können p
 **Kann jeder alles sehen?**  
 Nein. Benutzer und Gruppen können so eingerichtet werden, dass nur freigegebene Ordner durchsucht und geöffnet werden können.
 
-**Ist das ein Ersatz für SharePoint oder QNAP?**  
+**Ist das ein Ersatz für SharePoint oder den Dateiserver?**  
 Nein. Es ergänzt bestehende Ablagen. Die Dateien bleiben dort, wo sie sind — die Wissensdatenbank macht sie besser nutzbar.
 
 **Wie schnell ist das eingerichtet?**  
